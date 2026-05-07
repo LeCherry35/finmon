@@ -1,6 +1,21 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
-## Getting Started
+## Running with Docker
+
+Make sure your `.env` file is populated with the database connection details. Then build and run the app:
+
+```bash
+docker build -t finmon .
+docker run -d --name finmon-app --env-file .env -p 3000:3000 finmon
+```
+
+Open [http://localhost:3000](http://localhost:3000) in your browser.
+
+> If `SQL_DB_HOST` in your `.env` is `localhost`, change it to `host.docker.internal` so the container can reach PostgreSQL on your machine.
+
+---
+docker run -d --name finmon-app --env-file .env -e SQL_DB_HOST=host.docker.internal -p 3000:3000 finmon
+## Getting Started (local dev)
 
 First, run the development server:
 

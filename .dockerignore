@@ -1,0 +1,10 @@
+.git
+node_modules
+.next
+data
+.claude
+issues
+*.md
+Dockerfile
+.dockerignore
+docker-compose.yml
