@@ -1,0 +1,2 @@
+ALTER TABLE plans        ALTER COLUMN amount TYPE NUMERIC(12,2);
+ALTER TABLE transactions ALTER COLUMN amount TYPE NUMERIC(12,2);

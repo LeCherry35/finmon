@@ -30,10 +30,10 @@ export async function getPlansForMonth(month: string): Promise<PlanEntry[]> {
             COALESCE(SUM(CASE WHEN t.type = 'spend' THEN t.amount END), 0) AS spent
      FROM categories c
      LEFT JOIN plans p ON p.category_id = c.id AND p.month = $1
-     LEFT JOIN transactions t ON t.category_id = c.id AND LEFT(t.date, 7) = $2
+     LEFT JOIN transactions t ON t.category_id = c.id AND LEFT(t.date, 7) = $1
      GROUP BY c.id, c.name, c.priority, p.id, p.amount
      ORDER BY c.priority DESC, c.name ASC`,
-    [month, month]
+    [month]
   );
   return rows;
 }

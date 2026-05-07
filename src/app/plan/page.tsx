@@ -7,7 +7,7 @@ export default async function PlanPage() {
   const month = new Date().toISOString().slice(0, 7);
   const rows = await getPlansForMonth(month);
   const total = rows.reduce((sum, r) => sum + (r.amount ?? 0), 0);
-  const totalSpent = rows.reduce((sum, r) => sum + r.spent, 0);
+  const totalSpent = rows.reduce((sum, r) => sum + (r.plan_id !== null ? r.spent : 0), 0);
   const totalLeft = total - totalSpent;
 
   return (

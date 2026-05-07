@@ -1,4 +1,7 @@
-import { Pool } from "pg";
+import { Pool, types } from "pg";
+
+// NUMERIC (OID 1700) comes back as string by default — parse to float
+types.setTypeParser(1700, parseFloat);
 
 declare global {
   // eslint-disable-next-line no-var
@@ -12,7 +15,7 @@ function createPool(): Pool {
     database: process.env.SQL_DB_NAME,
     user: process.env.SQL_DB_USER,
     password: process.env.SQL_DB_PASSWORD,
-    ssl: { rejectUnauthorized: false }
+    ssl: process.env.SQL_DB_SSL === "false" ? false : { rejectUnauthorized: false },
   });
 }
 

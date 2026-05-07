@@ -3,14 +3,17 @@
 import { revalidatePath } from "next/cache";
 import { pool } from "@/db";
 
+const MONTH_RE = /^\d{4}-\d{2}$/;
+
 export async function upsertPlan(formData: FormData) {
   const category_id = Number(formData.get("category_id"));
-  const month = formData.get("month") as string;
+  const month = ((formData.get("month") as string | null) ?? "").trim();
   const amount = Number(formData.get("amount"));
 
-  if (amount <= 0) throw new Error("Amount must be positive");
-  if (!month) throw new Error("Month is required");
   if (!category_id) throw new Error("Category is required");
+  if (!month) throw new Error("Month is required");
+  if (!MONTH_RE.test(month)) throw new Error("Month must be YYYY-MM");
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error("Amount must be positive");
 
   await pool.query(
     `INSERT INTO plans (category_id, month, amount) VALUES ($1, $2, $3)

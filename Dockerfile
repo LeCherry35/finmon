@@ -22,7 +22,7 @@ RUN addgroup --system --gid 1001 nodejs && \
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-COPY --from=builder --chown=nextjs:nodejs /app/src/db/schema.sql ./src/db/schema.sql
+COPY --from=builder --chown=nextjs:nodejs /app/src/db/migrations ./src/db/migrations
 
 USER nextjs
 
