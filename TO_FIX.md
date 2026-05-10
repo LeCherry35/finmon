@@ -43,6 +43,3 @@ Documented as intentional for single-user use, but if ever exposed past `localho
 
 ### 19. Brand link `/` has no active style
 `src/app/layout.tsx` brand link doesn't participate in `NavLinks` active state, even though `/` redirects to `/transactions`.
-
-### 20. Auto-memory is stale
-`MEMORY.md` claims SQLite (`better-sqlite3`); project is on Postgres via `pg`. Out-of-repo, but will mislead future sessions.

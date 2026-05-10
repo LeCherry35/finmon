@@ -8,10 +8,10 @@ Entities:
 - **Transaction** — `amount`, `type` (`income` | `spend`), `category_id`, `date` (`YYYY-MM-DD`), optional `note`.
 - **Plan** — `(category_id, month)` budget; one amount per category per `YYYY-MM`. Upsert on conflict.
 
-Pages: `/transactions` (default landing — list/CRUD), `/categories` (CRUD), `/plan` (current month: planned vs spent vs left, per category), `/expenditures` (spend totals by category, all-time).
+Pages: `/transactions` (default landing — list/CRUD), `/categories` (CRUD), `/plan` (current month: planned vs spent vs left, per category), `/expenditures` (spend totals by category, all-time), `/charts` (visualizations — currently a stacked-area expenditures-over-time chart, switchable via tabs as more chart types are added).
 
 ## Stack
-Next.js 16 (App Router), React 19, PostgreSQL via `pg`, Tailwind v4, TypeScript. No auth — single-user tool. Path alias `@/` → `src/`.
+Next.js 16 (App Router), React 19, PostgreSQL via `pg`, Tailwind v4, TypeScript, Recharts (for `/charts` only). No auth — single-user tool. Path alias `@/` → `src/`.
 
 ## Database
 - Migrations run automatically on startup via `src/instrumentation.ts`. Add numbered `.sql` files to `src/db/migrations/` (e.g. `003_add_col.sql`) — the runner applies any not yet recorded in the `_migrations` table, each in its own transaction. Never edit existing migration files.
@@ -30,3 +30,5 @@ Next.js 16 (App Router), React 19, PostgreSQL via `pg`, Tailwind v4, TypeScript.
 - **Reads**: async server components call `src/db/queries.ts`. No API routes.
 - **Writes**: server actions in `src/actions/*.ts` (`"use server"`) — read `FormData`, validate, `pool.query(...)`, `revalidatePath(...)`.
 - Entity types are exported from their action file and re-imported by `queries.ts`.
+- **Filters**: `/transactions`, `/expenditures`, `/plan`, `/charts` share the `FilterPanel` widget and the `parseFilters`/`resolveFilters` helpers in `src/lib/filters.ts`. Filter state lives in URL search params (`?months=…&categories=…`); pages read `await props.searchParams` and push the resolved filter into SQL via `= ANY($n::text[])`.
+- **Charts**: server component fetches `getExpenditureSeries` (long rows) and pivots to wide rows via `pivotForRecharts` in `src/lib/chartData.ts`; passes them to a `"use client"` chart component (`src/components/charts/ExpendituresOverTime.tsx`) that wraps Recharts. Bucket granularity (`day` for ≤180 visible days, `month` otherwise) and the trim-current-month-tail rule live in `src/lib/charts.ts`. To add a new chart type, register it in `src/components/charts/registry.ts` and render the new component conditionally in `src/app/charts/page.tsx`.

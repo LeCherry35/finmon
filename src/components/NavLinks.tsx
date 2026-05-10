@@ -8,6 +8,7 @@ const links = [
   { href: "/categories", label: "Categories" },
   { href: "/expenditures", label: "Expenditures" },
   { href: "/plan", label: "Plan" },
+  { href: "/charts", label: "Charts" },
 ];
 
 export default function NavLinks() {

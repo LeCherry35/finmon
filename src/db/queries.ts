@@ -1,11 +1,20 @@
 import { pool } from "@/db";
 import type { Category } from "@/actions/categories";
 import type { Transaction } from "@/actions/transactions";
+import type { Bucket } from "@/lib/charts";
 
 export type ExpenditureByCategory = {
   category_name: string;
   total: number;
   count: number;
+};
+
+export type ExpenditureSeriesRow = {
+  category_id: number;
+  category_name: string;
+  priority: number;
+  bucket: string;
+  total: number;
 };
 
 export type QueryFilters = {
@@ -130,6 +139,40 @@ export async function getExpendituresByCategory(
      WHERE ${where.join(" AND ")}
      GROUP BY t.category_id, c.name
      ORDER BY total DESC`,
+    params,
+  );
+  return rows;
+}
+
+export async function getExpenditureSeries(
+  months: string[],
+  categoryIds: number[] | null,
+  bucket: Bucket,
+): Promise<ExpenditureSeriesRow[]> {
+  if (months.length === 0) return [];
+
+  const bucketExpr = bucket === "day" ? "t.date" : "LEFT(t.date, 7)";
+
+  const params: unknown[] = [months];
+  let categoryClause = "";
+  if (categoryIds && categoryIds.length >= 0) {
+    params.push(categoryIds);
+    categoryClause = ` AND t.category_id = ANY($${params.length}::int[])`;
+  }
+
+  const { rows } = await pool.query<ExpenditureSeriesRow>(
+    `SELECT c.id AS category_id,
+            c.name AS category_name,
+            c.priority,
+            ${bucketExpr} AS bucket,
+            SUM(t.amount)::float8 AS total
+     FROM transactions t
+     JOIN categories c ON c.id = t.category_id
+     WHERE t.type = 'spend'
+       AND LEFT(t.date, 7) = ANY($1::text[])
+       ${categoryClause}
+     GROUP BY c.id, c.name, c.priority, bucket
+     ORDER BY c.priority DESC, c.name ASC, bucket ASC`,
     params,
   );
   return rows;
