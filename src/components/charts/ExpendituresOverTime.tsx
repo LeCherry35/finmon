@@ -143,38 +143,49 @@ function CrosshairTooltip({
       valueByName.set(key, item.value);
     }
   }
-  const total = Array.from(valueByName.values()).reduce((a, b) => a + b, 0);
+  const spent = categories
+    .map((c) => ({ category: c, value: valueByName.get(c.name) ?? 0 }))
+    .filter((row) => row.value > 0);
+  const total = spent.reduce((sum, r) => sum + r.value, 0);
 
   return (
     <div className="rounded-md border border-zinc-200 bg-white shadow-lg text-xs">
       <div className="px-3 py-2 border-b border-zinc-100 font-medium text-zinc-700">
         {label ? formatBucketLabel(label, bucket) : ""}
       </div>
-      <ul className="px-3 py-2 space-y-1">
-        {categories.map((c) => {
-          const v = valueByName.get(c.name) ?? 0;
-          const color = categoryColor(c.id);
-          return (
-            <li
-              key={c.id}
-              className="flex items-center justify-between gap-4 text-zinc-600"
-            >
-              <span className="inline-flex items-center gap-1.5">
-                <span
-                  className="inline-block w-2.5 h-2.5 rounded-sm border"
-                  style={{ background: color.fill, borderColor: color.stroke }}
-                />
-                {c.name}
-              </span>
-              <span className="tabular-nums">{v.toFixed(2)}</span>
-            </li>
-          );
-        })}
-      </ul>
-      <div className="px-3 py-2 border-t border-zinc-100 flex items-center justify-between gap-4 text-zinc-800 font-medium">
-        <span>Total</span>
-        <span className="tabular-nums">{total.toFixed(2)}</span>
-      </div>
+      {spent.length === 0 ? (
+        <div className="px-3 py-2 text-zinc-400">No spend</div>
+      ) : (
+        <>
+          <ul className="px-3 py-2 space-y-1">
+            {spent.map(({ category: c, value: v }) => {
+              const color = categoryColor(c.id);
+              return (
+                <li
+                  key={c.id}
+                  className="flex items-center justify-between gap-4 text-zinc-600"
+                >
+                  <span className="inline-flex items-center gap-1.5">
+                    <span
+                      className="inline-block w-2.5 h-2.5 rounded-sm border"
+                      style={{
+                        background: color.fill,
+                        borderColor: color.stroke,
+                      }}
+                    />
+                    {c.name}
+                  </span>
+                  <span className="tabular-nums">{v.toFixed(2)}</span>
+                </li>
+              );
+            })}
+          </ul>
+          <div className="px-3 py-2 border-t border-zinc-100 flex items-center justify-between gap-4 text-zinc-800 font-medium">
+            <span>Total</span>
+            <span className="tabular-nums">{total.toFixed(2)}</span>
+          </div>
+        </>
+      )}
     </div>
   );
 }
