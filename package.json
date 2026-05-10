@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "db:init": "node --env-file=.env scripts/init-db.mjs"
+    "db:init": "node --env-file=.env scripts/init-db.mjs",
+    "db:seed:init": "node --env-file=.env scripts/seed.mjs init",
+    "db:seed:month": "node --env-file=.env scripts/seed.mjs month"
   },
   "dependencies": {
     "next": "16.2.4",

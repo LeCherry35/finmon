@@ -38,9 +38,6 @@ Documented as intentional for single-user use, but if ever exposed past `localho
 
 ## Low / cosmetic
 
-### 17. `data/` directory leftover from SQLite era
-Gitignored, unused. Delete it.
-
 ### 19. Brand link `/` has no active style
 `src/app/layout.tsx` brand link doesn't participate in `NavLinks` active state, even though `/` redirects to `/transactions`.
 

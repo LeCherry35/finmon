@@ -5,7 +5,8 @@
       "Bash(docker stop *)",
       "Bash(docker rm *)",
       "Bash(docker build *)",
-      "Bash(docker run *)"
+      "Bash(docker run *)",
+      "Bash(curl *)"
     ]
   }
 }

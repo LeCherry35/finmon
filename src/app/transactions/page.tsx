@@ -35,18 +35,18 @@ export default async function TransactionsPage() {
             <option value="spend">Spend</option>
             <option value="income">Income</option>
           </select>
-          <select
-            name="category_id"
+          <input
+            name="category_name"
+            list="category-options"
             required
+            placeholder="Category"
             className="border border-zinc-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-zinc-400"
-          >
-            <option value="">Category</option>
+          />
+          <datalist id="category-options">
             {categories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
+              <option key={c.id} value={c.name} />
             ))}
-          </select>
+          </datalist>
           <input
             name="date"
             type="date"
@@ -68,14 +68,6 @@ export default async function TransactionsPage() {
             Add
           </button>
         </div>
-        {categories.length === 0 && (
-          <p className="text-xs text-amber-600">
-            No categories yet —{" "}
-            <a href="/categories" className="underline">
-              add one first
-            </a>
-          </p>
-        )}
       </form>
 
       <table className="w-full table-fixed">
