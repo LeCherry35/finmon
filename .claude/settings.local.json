@@ -6,7 +6,11 @@
       "Bash(docker rm *)",
       "Bash(docker build *)",
       "Bash(docker run *)",
-      "Bash(curl *)"
+      "Bash(curl *)",
+      "Bash(npx tsc *)",
+      "Bash(echo \"exit=$?\")",
+      "Bash(PGPASSWORD=finmon psql -h localhost -U finmon -d finmon -c \"SELECT name FROM _migrations ORDER BY name;\" -c \"\\\\d transactions\")",
+      "Bash(PGPASSWORD=finmon psql *)"
     ]
   }
 }

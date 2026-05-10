@@ -1,20 +1,45 @@
 export const dynamic = "force-dynamic";
 
-import { getTransactions, getCategories } from "@/db/queries";
+import {
+  getTransactions,
+  getCategories,
+  getAvailableMonths,
+} from "@/db/queries";
 import { createTransaction } from "@/actions/transactions";
 import TransactionRow from "@/components/TransactionRow";
+import FilterPanel from "@/components/FilterPanel";
+import { parseFilters, resolveFilters } from "@/lib/filters";
 
-export default async function TransactionsPage() {
-  const [transactions, categories] = await Promise.all([
-    getTransactions(),
+export default async function TransactionsPage(
+  props: PageProps<"/transactions">,
+) {
+  const sp = await props.searchParams;
+  const filters = parseFilters(sp);
+
+  const [categories, availableMonths] = await Promise.all([
     getCategories(),
+    getAvailableMonths(),
   ]);
+
+  const resolved = resolveFilters(filters);
+
+  const transactions = await getTransactions({
+    months: resolved.months,
+    categoryIds: resolved.categoryIds,
+  });
 
   const today = new Date().toISOString().slice(0, 10);
 
   return (
     <div className="max-w-3xl mx-auto py-10 px-4 space-y-8">
-      <h1 className="text-xl font-semibold">Transactions</h1>
+      <div className="flex items-center gap-3">
+        <h1 className="text-xl font-semibold">Transactions</h1>
+        <FilterPanel
+          availableMonths={availableMonths}
+          categories={categories}
+          selected={filters}
+        />
+      </div>
 
       <form action={createTransaction} className="space-y-3">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -94,7 +119,7 @@ export default async function TransactionsPage() {
           {transactions.length === 0 && (
             <tr>
               <td colSpan={5} className="py-4 text-center text-zinc-400 text-sm">
-                No transactions yet
+                No transactions match the current filters
               </td>
             </tr>
           )}

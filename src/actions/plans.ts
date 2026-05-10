@@ -2,8 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { pool } from "@/db";
-
-const MONTH_RE = /^\d{4}-\d{2}$/;
+import { MONTH_RE } from "@/lib/filters";
 
 export async function upsertPlan(formData: FormData) {
   const category_id = Number(formData.get("category_id"));

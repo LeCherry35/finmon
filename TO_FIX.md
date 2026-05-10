@@ -9,6 +9,9 @@ Audit findings, ordered by severity.
 ### 4. Date / month columns accept arbitrary strings — partially fixed
 Server actions now validate format with regex (no DB change). The schema-level `CHECK` constraints were reverted — adding them to an existing DB requires `ALTER TABLE`.
 
+### 5. Category deletion has undefined behavior
+Deleting a category leads to undefined app behavior — transactions and plans reference `category_id`, so the result is some mix of raw FK errors, orphaned rows, or broken pages depending on the path. Likely fix: remove the delete affordance entirely (decision pending). See also item 12 for the user-facing FK-error symptom.
+
 ---
 
 ## High — functional bugs in normal use

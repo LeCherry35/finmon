@@ -1,17 +1,47 @@
 export const dynamic = "force-dynamic";
 
-import { getExpendituresByCategory } from "@/db/queries";
+import {
+  getExpendituresByCategory,
+  getCategories,
+  getAvailableMonths,
+} from "@/db/queries";
+import FilterPanel from "@/components/FilterPanel";
+import { parseFilters, resolveFilters } from "@/lib/filters";
 
-export default async function ExpendituresPage() {
-  const rows = await getExpendituresByCategory();
-  const grandTotal = rows.reduce((sum, r) => sum + r.total, 0);
+export default async function ExpendituresPage(
+  props: PageProps<"/expenditures">,
+) {
+  const sp = await props.searchParams;
+  const filters = parseFilters(sp);
+
+  const [categories, availableMonths] = await Promise.all([
+    getCategories(),
+    getAvailableMonths(),
+  ]);
+
+  const resolved = resolveFilters(filters);
+
+  const rows = await getExpendituresByCategory({
+    months: resolved.months,
+    categoryIds: resolved.categoryIds,
+  });
+  const grandTotal = rows.reduce((sum, r) => sum + Number(r.total), 0);
 
   return (
     <div className="max-w-xl mx-auto py-10 px-4 space-y-6">
-      <h1 className="text-xl font-semibold">Expenditures by Category</h1>
+      <div className="flex items-center gap-3">
+        <h1 className="text-xl font-semibold">Expenditures by Category</h1>
+        <FilterPanel
+          availableMonths={availableMonths}
+          categories={categories}
+          selected={filters}
+        />
+      </div>
 
       {rows.length === 0 ? (
-        <p className="text-sm text-zinc-400">No spend transactions yet.</p>
+        <p className="text-sm text-zinc-400">
+          No spend transactions match the current filters.
+        </p>
       ) : (
         <table className="w-full">
           <thead>
@@ -27,7 +57,7 @@ export default async function ExpendituresPage() {
                 <td className="py-2 pr-4 text-sm">{row.category_name}</td>
                 <td className="py-2 pr-4 text-sm text-right text-zinc-500">{row.count}</td>
                 <td className="py-2 text-sm text-right text-red-600">
-                  {row.total.toFixed(2)}
+                  {Number(row.total).toFixed(2)}
                 </td>
               </tr>
             ))}
