@@ -4,6 +4,7 @@ import {
   getCategories,
   getAvailableMonths,
   getExpenditureSeries,
+  getExpendituresByCategory,
 } from "@/db/queries";
 import FilterPanel from "@/components/FilterPanel";
 import ChartTabs from "@/components/charts/ChartTabs";
@@ -13,6 +14,7 @@ import {
   type ChartId,
 } from "@/components/charts/registry";
 import ExpendituresOverTime from "@/components/charts/ExpendituresOverTime";
+import CategoryShare from "@/components/charts/CategoryShare";
 import { parseFilters, resolveFilters } from "@/lib/filters";
 import { generateBuckets, pickBucket } from "@/lib/charts";
 import {
@@ -43,24 +45,9 @@ export default async function ChartsPage(props: PageProps<"/charts">) {
     visibleCategoryIds.includes(c.id),
   );
 
-  const bucket = pickBucket(resolved.months);
-  const buckets = generateBuckets(resolved.months, bucket);
-
   const orderedCategories = [...visibleCategories].sort(
     (a, b) => b.priority - a.priority || a.name.localeCompare(b.name),
   );
-
-  const rows =
-    orderedCategories.length === 0
-      ? []
-      : await getExpenditureSeries(
-          resolved.months,
-          resolved.categoryIds,
-          bucket,
-        );
-
-  const data = pivotForRecharts(buckets, orderedCategories, rows);
-  const monthBoundaries = monthTransitionBuckets(buckets);
 
   return (
     <div className="max-w-5xl mx-auto py-10 px-4 space-y-6">
@@ -76,13 +63,67 @@ export default async function ChartsPage(props: PageProps<"/charts">) {
       <ChartTabs current={chart} />
 
       {chart === "expenditures-over-time" && (
-        <ExpendituresOverTime
-          data={data}
-          categories={orderedCategories}
-          monthBoundaries={monthBoundaries}
-          bucket={bucket}
+        <ExpendituresOverTimePanel
+          months={resolved.months}
+          categoryIds={resolved.categoryIds}
+          orderedCategories={orderedCategories}
+        />
+      )}
+
+      {chart === "category-share" && (
+        <CategorySharePanel
+          months={resolved.months}
+          categoryIds={resolved.categoryIds}
+          orderedCategories={orderedCategories}
         />
       )}
     </div>
   );
+}
+
+async function ExpendituresOverTimePanel({
+  months,
+  categoryIds,
+  orderedCategories,
+}: {
+  months: string[];
+  categoryIds: number[] | null;
+  orderedCategories: Awaited<ReturnType<typeof getCategories>>;
+}) {
+  const bucket = pickBucket(months);
+  const buckets = generateBuckets(months, bucket);
+
+  const rows =
+    orderedCategories.length === 0
+      ? []
+      : await getExpenditureSeries(months, categoryIds, bucket);
+
+  const data = pivotForRecharts(buckets, orderedCategories, rows);
+  const monthBoundaries = monthTransitionBuckets(buckets);
+
+  return (
+    <ExpendituresOverTime
+      data={data}
+      categories={orderedCategories}
+      monthBoundaries={monthBoundaries}
+      bucket={bucket}
+    />
+  );
+}
+
+async function CategorySharePanel({
+  months,
+  categoryIds,
+  orderedCategories,
+}: {
+  months: string[];
+  categoryIds: number[] | null;
+  orderedCategories: Awaited<ReturnType<typeof getCategories>>;
+}) {
+  const rows =
+    orderedCategories.length === 0
+      ? []
+      : await getExpendituresByCategory({ months, categoryIds });
+
+  return <CategoryShare rows={rows} categories={orderedCategories} />;
 }

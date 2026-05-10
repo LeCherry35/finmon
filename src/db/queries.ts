@@ -4,6 +4,7 @@ import type { Transaction } from "@/actions/transactions";
 import type { Bucket } from "@/lib/charts";
 
 export type ExpenditureByCategory = {
+  category_id: number;
   category_name: string;
   total: number;
   count: number;
@@ -133,11 +134,11 @@ export async function getExpendituresByCategory(
   }
 
   const { rows } = await pool.query<ExpenditureByCategory>(
-    `SELECT c.name AS category_name, SUM(t.amount) AS total, COUNT(*)::INT AS count
+    `SELECT c.id AS category_id, c.name AS category_name, SUM(t.amount) AS total, COUNT(*)::INT AS count
      FROM transactions t
      JOIN categories c ON c.id = t.category_id
      WHERE ${where.join(" AND ")}
-     GROUP BY t.category_id, c.name
+     GROUP BY t.category_id, c.id, c.name
      ORDER BY total DESC`,
     params,
   );

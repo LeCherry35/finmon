@@ -1,11 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useSyncExternalStore, useTransition } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { Category } from "@/actions/categories";
 import {
   type Filters,
-  buildFilterQuery,
   currentMonth,
   formatMonthLabel,
   summarizeFilters,
@@ -44,6 +43,7 @@ export default function FilterPanel({
 }) {
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
   const expanded = useSyncExternalStore(
     subscribe,
@@ -98,9 +98,14 @@ export default function FilterPanel({
     nextMonths: string[] | "default",
     nextCategoryIds: number[] | "all",
   ) {
-    const query = buildFilterQuery(nextMonths, nextCategoryIds);
+    const params = new URLSearchParams(searchParams);
+    if (nextMonths === "default") params.delete("months");
+    else params.set("months", nextMonths.join(","));
+    if (nextCategoryIds === "all") params.delete("categories");
+    else params.set("categories", nextCategoryIds.join(","));
+    const qs = params.toString();
     startTransition(() => {
-      router.replace(`${pathname}${query}`, { scroll: false });
+      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
     });
   }
 
@@ -135,8 +140,12 @@ export default function FilterPanel({
     navigate(selected.months, []);
   }
   function resetAll() {
+    const params = new URLSearchParams(searchParams);
+    params.delete("months");
+    params.delete("categories");
+    const qs = params.toString();
     startTransition(() => {
-      router.replace(pathname, { scroll: false });
+      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
     });
   }
 
