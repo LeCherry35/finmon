@@ -28,7 +28,10 @@
       "PowerShell(try { Start-Sleep -Seconds 1; $r = Invoke-WebRequest -UseBasicParsing -Uri \"http://localhost:3000/charts\" -TimeoutSec 30; \"/charts: $\\($r.StatusCode\\)\"; \"recharts-classes: $\\([regex]::Matches\\($r.Content, 'recharts-'\\).Count\\)\" } catch { \"ERR: $\\($_.Exception.Message\\)\" })",
       "PowerShell($r = Invoke-WebRequest -UseBasicParsing -Uri \"http://localhost:3000/charts\" -TimeoutSec 30; $h = $r.Content; $i = $h.IndexOf\\('Expenditures over time'\\); if \\($i -ge 0\\) { $h.Substring\\($i, [Math]::Min\\(1500, $h.Length - $i\\)\\) })",
       "Bash(Get-ChildItem -Path \"C:\\\\beautyandprosperity\\\\Projects\\\\Dev\\\\finmon\" -Recurse -Include \"*.tsx\", \"*.ts\" -File)",
-      "Bash(Select-Object -ExpandProperty FullName)"
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(dir)",
+      "Bash(xargs grep -l \"TODO\\\\|FIXME\\\\|BUG\\\\|HACK\")",
+      "Bash(grep -v \"\\\\$[0-9]\")"
     ]
   }
 }
