@@ -37,8 +37,8 @@ export default async function PlanPage(props: PageProps<"/plan">) {
           .join(" + ");
 
   return (
-    <div className="max-w-xl mx-auto py-10 px-4 space-y-6">
-      <div className="flex items-center gap-3">
+    <div className="max-w-xl mx-auto py-6 px-4 space-y-6 md:py-10">
+      <div className="flex flex-col items-start gap-2 md:flex-row md:items-center md:gap-3">
         <h1 className="text-xl font-semibold">Plan — {headerLabel}</h1>
         <FilterPanel
           availableMonths={availableMonths}

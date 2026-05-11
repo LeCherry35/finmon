@@ -24,3 +24,7 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+@utility safe-pb {
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.5rem);
+}

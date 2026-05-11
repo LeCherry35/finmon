@@ -5,8 +5,9 @@ import {
   getCategories,
   getAvailableMonths,
 } from "@/db/queries";
-import { createTransaction } from "@/actions/transactions";
 import TransactionRow from "@/components/TransactionRow";
+import TransactionCreateForm from "@/components/TransactionCreateForm";
+import TransactionCreateSheet from "@/components/TransactionCreateSheet";
 import FilterPanel from "@/components/FilterPanel";
 import { parseFilters, resolveFilters } from "@/lib/filters";
 
@@ -31,8 +32,8 @@ export default async function TransactionsPage(
   const today = new Date().toISOString().slice(0, 10);
 
   return (
-    <div className="max-w-3xl mx-auto py-10 px-4 space-y-8">
-      <div className="flex items-center gap-3">
+    <div className="max-w-3xl mx-auto py-6 px-4 space-y-6 md:py-10 md:space-y-8">
+      <div className="flex flex-col items-start gap-2 md:flex-row md:items-center md:gap-3">
         <h1 className="text-xl font-semibold">Transactions</h1>
         <FilterPanel
           availableMonths={availableMonths}
@@ -41,61 +42,10 @@ export default async function TransactionsPage(
         />
       </div>
 
-      <form action={createTransaction} className="space-y-3">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <input
-            name="amount"
-            type="number"
-            step="0.01"
-            min="0.01"
-            required
-            placeholder="Amount"
-            className="border border-zinc-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-zinc-400"
-          />
-          <select
-            name="type"
-            required
-            className="border border-zinc-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-zinc-400"
-          >
-            <option value="spend">Spend</option>
-            <option value="income">Income</option>
-          </select>
-          <input
-            name="category_name"
-            list="category-options"
-            required
-            placeholder="Category"
-            className="border border-zinc-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-zinc-400"
-          />
-          <datalist id="category-options">
-            {categories.map((c) => (
-              <option key={c.id} value={c.name} />
-            ))}
-          </datalist>
-          <input
-            name="date"
-            type="date"
-            defaultValue={today}
-            required
-            className="border border-zinc-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-zinc-400"
-          />
-        </div>
-        <div className="flex gap-3">
-          <input
-            name="note"
-            placeholder="Note (optional)"
-            className="flex-1 border border-zinc-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-zinc-400"
-          />
-          <button
-            type="submit"
-            className="bg-zinc-800 text-white text-sm px-4 py-2 rounded hover:bg-zinc-700"
-          >
-            Add
-          </button>
-        </div>
-      </form>
+      <TransactionCreateForm categories={categories} today={today} />
+      <TransactionCreateSheet categories={categories} today={today} />
 
-      <table className="w-full table-fixed">
+      <table className="w-full table-auto md:table-fixed">
         <colgroup>
           <col className="w-28" />
           <col className="w-32" />
@@ -103,7 +53,7 @@ export default async function TransactionsPage(
           <col />
           <col className="w-16" />
         </colgroup>
-        <thead>
+        <thead className="hidden md:table-header-group">
           <tr className="text-left text-zinc-500 border-b border-zinc-200">
             <th className="pb-2 pr-2 text-sm font-medium">Date</th>
             <th className="pb-2 pr-2 text-sm font-medium">Category</th>

@@ -1,13 +1,14 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { updateCategory, deleteCategory } from "@/actions/categories";
+import { updateCategory } from "@/actions/categories";
 import type { Category } from "@/actions/categories";
 
 export default function CategoryRow({ category }: { category: Category }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(category.name);
   const [priority, setPriority] = useState(category.priority);
+  const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
   function handleSave() {
@@ -16,7 +17,12 @@ export default function CategoryRow({ category }: { category: Category }) {
       fd.append("id", String(category.id));
       fd.append("name", name);
       fd.append("priority", String(priority));
-      await updateCategory(fd);
+      const res = await updateCategory(fd);
+      if (!res.ok) {
+        setError(res.error);
+        return;
+      }
+      setError(null);
       setEditing(false);
     });
   }
@@ -24,19 +30,13 @@ export default function CategoryRow({ category }: { category: Category }) {
   function handleCancel() {
     setName(category.name);
     setPriority(category.priority);
+    setError(null);
     setEditing(false);
   }
 
-  function handleDelete() {
-    startTransition(async () => {
-      const fd = new FormData();
-      fd.append("id", String(category.id));
-      await deleteCategory(fd);
-    });
-  }
-
   return (
-    <tr className="border-b border-zinc-100">
+    <>
+    <tr className={error ? "" : "border-b border-zinc-100"}>
       <td className="py-2 pr-4">
         {editing ? (
           <input
@@ -62,48 +62,47 @@ export default function CategoryRow({ category }: { category: Category }) {
           <span className="text-sm text-zinc-500">{priority}</span>
         )}
       </td>
-      <td className="py-2 w-16">
-        <div className="flex gap-2 justify-end">
+      <td className="py-1 w-16">
+        <div className="flex gap-1 justify-end">
           {editing ? (
             <>
               <button
                 onClick={handleSave}
                 disabled={isPending}
                 title="Save"
-                className="text-emerald-600 hover:text-emerald-800 disabled:opacity-40"
+                aria-label="Save"
+                className="inline-flex items-center justify-center min-w-10 min-h-10 text-emerald-600 hover:text-emerald-800 disabled:opacity-40"
               >
                 <CheckIcon />
               </button>
               <button
                 onClick={handleCancel}
                 title="Cancel"
-                className="text-zinc-400 hover:text-zinc-600"
+                aria-label="Cancel"
+                className="inline-flex items-center justify-center min-w-10 min-h-10 text-zinc-400 hover:text-zinc-600"
               >
                 <XIcon />
               </button>
             </>
           ) : (
-            <>
-              <button
-                onClick={() => setEditing(true)}
-                title="Edit"
-                className="text-zinc-400 hover:text-zinc-700"
-              >
-                <PencilIcon />
-              </button>
-              <button
-                onClick={handleDelete}
-                disabled={isPending}
-                title="Delete"
-                className="text-zinc-400 hover:text-red-500 disabled:opacity-40"
-              >
-                <TrashIcon />
-              </button>
-            </>
+            <button
+              onClick={() => setEditing(true)}
+              title="Edit"
+              aria-label="Edit"
+              className="inline-flex items-center justify-center min-w-10 min-h-10 text-zinc-400 hover:text-zinc-700"
+            >
+              <PencilIcon />
+            </button>
           )}
         </div>
       </td>
     </tr>
+    {error && (
+      <tr className="border-b border-zinc-100">
+        <td colSpan={3} className="pb-2 text-xs text-red-600">{error}</td>
+      </tr>
+    )}
+    </>
   );
 }
 
@@ -112,17 +111,6 @@ function PencilIcon() {
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
       <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-    </svg>
-  );
-}
-
-function TrashIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="3 6 5 6 21 6" />
-      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-      <path d="M10 11v6M14 11v6" />
-      <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
     </svg>
   );
 }

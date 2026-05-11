@@ -13,6 +13,7 @@ export default function PlanRow({
 }) {
   const [editing, setEditing] = useState(false);
   const [amount, setAmount] = useState(row.amount != null ? String(row.amount) : "");
+  const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
   function handleSave() {
@@ -21,23 +22,30 @@ export default function PlanRow({
       fd.append("category_id", String(row.category_id));
       fd.append("month", month);
       fd.append("amount", amount);
-      await upsertPlan(fd);
+      const res = await upsertPlan(fd);
+      if (!res.ok) {
+        setError(res.error);
+        return;
+      }
+      setError(null);
       setEditing(false);
     });
   }
 
   function handleCancel() {
     setAmount(row.amount != null ? String(row.amount) : "");
+    setError(null);
     setEditing(false);
   }
 
   const inputCls =
-    "w-28 border border-zinc-300 rounded px-2 py-1 text-sm text-right focus:outline-none focus:ring-1 focus:ring-zinc-400";
+    "w-24 md:w-28 border border-zinc-300 rounded px-2 py-1 text-sm text-right focus:outline-none focus:ring-1 focus:ring-zinc-400";
 
   const left = row.plan_id !== null ? (row.amount ?? 0) - row.spent : null;
 
   return (
-    <tr className="border-b border-zinc-100">
+    <>
+    <tr className={error ? "" : "border-b border-zinc-100"}>
       <td className="py-2 pr-4 text-sm">{row.category_name}</td>
       <td className="py-2 px-4 text-sm text-right">
         {left !== null ? (
@@ -65,7 +73,8 @@ export default function PlanRow({
               onClick={handleSave}
               disabled={isPending || !amount}
               title="Save"
-              className="text-emerald-600 hover:text-emerald-800 disabled:opacity-40"
+              aria-label="Save"
+              className="inline-flex items-center justify-center min-w-10 min-h-10 text-emerald-600 hover:text-emerald-800 disabled:opacity-40"
             >
               <CheckIcon />
             </button>
@@ -73,7 +82,8 @@ export default function PlanRow({
               <button
                 onClick={handleCancel}
                 title="Cancel"
-                className="text-zinc-400 hover:text-zinc-600"
+                aria-label="Cancel"
+                className="inline-flex items-center justify-center min-w-10 min-h-10 text-zinc-400 hover:text-zinc-600"
               >
                 <XIcon />
               </button>
@@ -85,7 +95,8 @@ export default function PlanRow({
             <button
               onClick={() => setEditing(true)}
               title="Change"
-              className="text-zinc-400 hover:text-zinc-700"
+              aria-label="Change planned amount"
+              className="inline-flex items-center justify-center min-w-10 min-h-10 text-zinc-400 hover:text-zinc-700"
             >
               <PencilIcon />
             </button>
@@ -93,6 +104,12 @@ export default function PlanRow({
         )}
       </td>
     </tr>
+    {error && (
+      <tr className="border-b border-zinc-100">
+        <td colSpan={3} className="pb-2 text-xs text-red-600 text-right">{error}</td>
+      </tr>
+    )}
+    </>
   );
 }
 

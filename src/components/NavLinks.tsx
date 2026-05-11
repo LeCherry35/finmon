@@ -2,21 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-
-const links = [
-  { href: "/transactions", label: "Transactions" },
-  { href: "/categories", label: "Categories" },
-  { href: "/expenditures", label: "Expenditures" },
-  { href: "/plan", label: "Plan" },
-  { href: "/charts", label: "Charts" },
-];
+import { NAV_LINKS } from "@/lib/nav";
 
 export default function NavLinks() {
   const pathname = usePathname();
 
   return (
-    <>
-      {links.map(({ href, label }) => (
+    <span className="hidden md:contents">
+      {NAV_LINKS.map(({ href, label }) => (
         <Link
           key={href}
           href={href}
@@ -29,6 +22,6 @@ export default function NavLinks() {
           {label}
         </Link>
       ))}
-    </>
+    </span>
   );
 }

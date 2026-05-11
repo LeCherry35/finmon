@@ -45,8 +45,7 @@ export default function ExpendituresOverTime({
   return (
     <div className="space-y-3">
       <div
-        className="w-full [&_.recharts-wrapper]:outline-none [&_.recharts-surface]:outline-none"
-        style={{ height: 380 }}
+        className="w-full h-72 md:h-[380px] [&_.recharts-wrapper]:outline-none [&_.recharts-surface]:outline-none"
       >
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart

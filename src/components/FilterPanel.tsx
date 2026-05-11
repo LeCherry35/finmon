@@ -171,12 +171,12 @@ export default function FilterPanel({
         aria-expanded={expanded}
       >
         <FunnelIcon />
-        <span className="truncate max-w-[14rem]">{summary}</span>
+        <span className="truncate max-w-[10rem] md:max-w-[14rem]">{summary}</span>
         <Chevron open={expanded} />
       </button>
 
       {expanded && (
-        <div className="absolute left-0 top-full mt-1 z-30 w-60 rounded-md border border-zinc-200 bg-white text-sm shadow-lg">
+        <div className="absolute left-0 top-full mt-1 z-30 w-[min(15rem,calc(100vw-2rem))] md:w-60 rounded-md border border-zinc-200 bg-white text-sm shadow-lg">
           <section className="px-3 py-3">
             <SectionHeader
               label="Months"

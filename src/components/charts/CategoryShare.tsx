@@ -42,8 +42,7 @@ export default function CategoryShare({ rows, categories }: Props) {
   return (
     <div className="space-y-3">
       <div
-        className="w-full relative [&_.recharts-wrapper]:outline-none [&_.recharts-surface]:outline-none"
-        style={{ height: 380 }}
+        className="w-full h-72 md:h-[380px] relative [&_.recharts-wrapper]:outline-none [&_.recharts-surface]:outline-none"
       >
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
@@ -62,8 +61,8 @@ export default function CategoryShare({ rows, categories }: Props) {
               nameKey="category_name"
               cx="50%"
               cy="50%"
-              innerRadius={70}
-              outerRadius={120}
+              innerRadius="37%"
+              outerRadius="63%"
               stroke="#ffffff"
               strokeWidth={1}
               isAnimationActive={false}

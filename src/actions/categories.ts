@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { pool } from "@/db";
+import type { ActionResult } from "@/actions/transactions";
 
 export type Category = { id: number; name: string; priority: number };
 
@@ -48,27 +49,28 @@ function isUniqueViolation(err: unknown): boolean {
   );
 }
 
-export async function updateCategory(formData: FormData) {
+export async function updateCategory(formData: FormData): Promise<ActionResult> {
   const id = Number(formData.get("id"));
   const name = ((formData.get("name") as string | null) ?? "").trim();
   const priority = Number(formData.get("priority"));
 
-  if (!name) throw new Error("Name is required");
+  if (!name) return { ok: false, error: "Name is required" };
   if (!Number.isFinite(priority) || priority < 0 || priority > 10)
-    throw new Error("Priority must be 0–10");
+    return { ok: false, error: "Priority must be 0–10" };
 
-  await pool.query(
-    "UPDATE categories SET name = $1, priority = $2 WHERE id = $3",
-    [name, priority, id]
-  );
+  try {
+    await pool.query(
+      "UPDATE categories SET name = $1, priority = $2 WHERE id = $3",
+      [name, priority, id]
+    );
+  } catch (e) {
+    if (isUniqueViolation(e))
+      return { ok: false, error: `A category named "${name}" already exists` };
+    throw e;
+  }
 
   revalidatePath("/categories");
   revalidatePath("/transactions");
+  return { ok: true };
 }
 
-export async function deleteCategory(formData: FormData) {
-  const id = Number(formData.get("id"));
-  await pool.query("DELETE FROM categories WHERE id = $1", [id]);
-  revalidatePath("/categories");
-  revalidatePath("/transactions");
-}

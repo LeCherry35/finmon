@@ -28,8 +28,8 @@ export default async function ExpendituresPage(
   const grandTotal = rows.reduce((sum, r) => sum + Number(r.total), 0);
 
   return (
-    <div className="max-w-xl mx-auto py-10 px-4 space-y-6">
-      <div className="flex items-center gap-3">
+    <div className="max-w-xl mx-auto py-6 px-4 space-y-6 md:py-10">
+      <div className="flex flex-col items-start gap-2 md:flex-row md:items-center md:gap-3">
         <h1 className="text-xl font-semibold">Expenditures by Category</h1>
         <FilterPanel
           availableMonths={availableMonths}
@@ -47,7 +47,10 @@ export default async function ExpendituresPage(
           <thead>
             <tr className="text-left text-zinc-500 border-b border-zinc-200">
               <th className="pb-2 pr-4 text-sm font-medium">Category</th>
-              <th className="pb-2 pr-4 text-sm font-medium text-right">Transactions</th>
+              <th className="pb-2 pr-4 text-sm font-medium text-right">
+                <span className="md:hidden">Tx</span>
+                <span className="hidden md:inline">Transactions</span>
+              </th>
               <th className="pb-2 text-sm font-medium text-right">Total</th>
             </tr>
           </thead>

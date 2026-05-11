@@ -107,7 +107,7 @@ export function formatMonthLabelShort(month: string): string {
 }
 
 export function categoryColor(id: number): { fill: string; stroke: string } {
-  const hue = (id * 67) % 360;
+  const hue = (id * 137.508) % 360;
   return {
     fill: `hsl(${hue} 60% 70% / 0.85)`,
     stroke: `hsl(${hue} 55% 45%)`,

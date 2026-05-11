@@ -8,7 +8,7 @@ export default async function CategoriesPage() {
   const categories = await getCategories();
 
   return (
-    <div className="max-w-xl mx-auto py-10 px-4 space-y-8">
+    <div className="max-w-xl mx-auto py-6 px-4 space-y-6 md:py-10 md:space-y-8">
       <h1 className="text-xl font-semibold">Categories</h1>
 
       <CategoryCreateForm />

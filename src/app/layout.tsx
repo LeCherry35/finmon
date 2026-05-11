@@ -1,7 +1,8 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist_Mono } from "next/font/google";
 import Link from "next/link";
 import NavLinks from "@/components/NavLinks";
+import MobileBottomNav from "@/components/MobileBottomNav";
 import "./globals.css";
 
 const mono = Geist_Mono({ variable: "--font-mono", subsets: ["latin"] });
@@ -9,6 +10,12 @@ const mono = Geist_Mono({ variable: "--font-mono", subsets: ["latin"] });
 export const metadata: Metadata = {
   title: "finmon",
   description: "Personal finance monitor",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({
@@ -25,7 +32,10 @@ export default function RootLayout({
           </Link>
           <NavLinks />
         </nav>
-        <main className="flex-1">{children}</main>
+        <main className="flex-1 pb-[calc(env(safe-area-inset-bottom,0px)+5rem)] md:pb-0">
+          {children}
+        </main>
+        <MobileBottomNav />
       </body>
     </html>
   );
