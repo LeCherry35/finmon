@@ -50,7 +50,7 @@ export default function CategoryShare({ rows, categories }: Props) {
               content={({ active, payload }) => (
                 <SliceTooltip
                   active={active}
-                  payload={payload as TooltipItem[] | undefined}
+                  payload={payload as readonly TooltipItem[] | undefined}
                   total={total}
                 />
               )}
@@ -198,7 +198,7 @@ function SliceTooltip({
   total,
 }: {
   active?: boolean;
-  payload?: TooltipItem[];
+  payload?: readonly TooltipItem[];
   total: number;
 }) {
   if (!active || !payload || payload.length === 0) return null;
