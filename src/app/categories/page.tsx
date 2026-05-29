@@ -1,11 +1,13 @@
 export const dynamic = "force-dynamic";
 
 import { getCategories } from "@/db/queries";
+import { requireUser } from "@/lib/dal";
 import CategoryRow from "@/components/CategoryRow";
 import CategoryCreateForm from "@/components/CategoryCreateForm";
 
 export default async function CategoriesPage() {
-  const categories = await getCategories();
+  const { id: userId } = await requireUser();
+  const categories = await getCategories(userId);
 
   return (
     <div className="max-w-xl mx-auto py-6 px-4 space-y-6 md:py-10 md:space-y-8">

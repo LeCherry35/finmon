@@ -6,6 +6,7 @@ import {
   getCategories,
   getAvailableMonths,
 } from "@/db/queries";
+import { requireUser } from "@/lib/dal";
 import PlanRow from "@/components/PlanRow";
 import FilterPanel from "@/components/FilterPanel";
 import {
@@ -15,12 +16,13 @@ import {
 } from "@/lib/filters";
 
 export default async function PlanPage(props: PageProps<"/plan">) {
+  const { id: userId } = await requireUser();
   const sp = await props.searchParams;
   const filters = parseFilters(sp);
 
   const [categories, availableMonths] = await Promise.all([
-    getCategories(),
-    getAvailableMonths(),
+    getCategories(userId),
+    getAvailableMonths(userId),
   ]);
 
   const resolved = resolveFilters(filters);
@@ -62,11 +64,13 @@ export default async function PlanPage(props: PageProps<"/plan">) {
         </p>
       ) : isSingleMonth ? (
         <SingleMonthPlan
+          userId={userId}
           month={resolved.months[0]}
           categoryIds={resolved.categoryIds}
         />
       ) : (
         <MultiMonthPlan
+          userId={userId}
           months={resolved.months}
           categoryIds={resolved.categoryIds}
         />
@@ -76,13 +80,15 @@ export default async function PlanPage(props: PageProps<"/plan">) {
 }
 
 async function SingleMonthPlan({
+  userId,
   month,
   categoryIds,
 }: {
+  userId: string;
   month: string;
   categoryIds: number[] | null;
 }) {
-  const rows = await getPlansForMonth(month, categoryIds);
+  const rows = await getPlansForMonth(userId, month, categoryIds);
   const total = rows.reduce((sum, r) => sum + (r.amount ?? 0), 0);
   const totalSpent = rows.reduce(
     (sum, r) => sum + (r.plan_id !== null ? Number(r.spent) : 0),
@@ -118,9 +124,11 @@ async function SingleMonthPlan({
 }
 
 async function MultiMonthPlan({
+  userId,
   months,
   categoryIds,
 }: {
+  userId: string;
   months: string[];
   categoryIds: number[] | null;
 }) {
@@ -131,7 +139,7 @@ async function MultiMonthPlan({
       </p>
     );
   }
-  const rows = await getPlansSummary(months, categoryIds);
+  const rows = await getPlansSummary(userId, months, categoryIds);
   const total = rows.reduce((sum, r) => sum + Number(r.amount), 0);
   const totalSpent = rows.reduce((sum, r) => sum + Number(r.spent), 0);
   const totalLeft = total - totalSpent;

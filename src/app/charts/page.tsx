@@ -6,6 +6,7 @@ import {
   getExpenditureSeries,
   getExpendituresByCategory,
 } from "@/db/queries";
+import { requireUser } from "@/lib/dal";
 import FilterPanel from "@/components/FilterPanel";
 import ChartTabs from "@/components/charts/ChartTabs";
 import {
@@ -29,13 +30,14 @@ function readChartId(value: string | string[] | undefined): ChartId {
 }
 
 export default async function ChartsPage(props: PageProps<"/charts">) {
+  const { id: userId } = await requireUser();
   const sp = await props.searchParams;
   const filters = parseFilters(sp);
   const chart = readChartId(sp.chart);
 
   const [categories, availableMonths] = await Promise.all([
-    getCategories(),
-    getAvailableMonths(),
+    getCategories(userId),
+    getAvailableMonths(userId),
   ]);
 
   const resolved = resolveFilters(filters);
@@ -64,6 +66,7 @@ export default async function ChartsPage(props: PageProps<"/charts">) {
 
       {chart === "expenditures-over-time" && (
         <ExpendituresOverTimePanel
+          userId={userId}
           months={resolved.months}
           categoryIds={resolved.categoryIds}
           orderedCategories={orderedCategories}
@@ -72,6 +75,7 @@ export default async function ChartsPage(props: PageProps<"/charts">) {
 
       {chart === "category-share" && (
         <CategorySharePanel
+          userId={userId}
           months={resolved.months}
           categoryIds={resolved.categoryIds}
           orderedCategories={orderedCategories}
@@ -82,10 +86,12 @@ export default async function ChartsPage(props: PageProps<"/charts">) {
 }
 
 async function ExpendituresOverTimePanel({
+  userId,
   months,
   categoryIds,
   orderedCategories,
 }: {
+  userId: string;
   months: string[];
   categoryIds: number[] | null;
   orderedCategories: Awaited<ReturnType<typeof getCategories>>;
@@ -96,7 +102,7 @@ async function ExpendituresOverTimePanel({
   const rows =
     orderedCategories.length === 0
       ? []
-      : await getExpenditureSeries(months, categoryIds, bucket);
+      : await getExpenditureSeries(userId, months, categoryIds, bucket);
 
   const data = pivotForRecharts(buckets, orderedCategories, rows);
   const monthBoundaries = monthTransitionBuckets(buckets);
@@ -112,10 +118,12 @@ async function ExpendituresOverTimePanel({
 }
 
 async function CategorySharePanel({
+  userId,
   months,
   categoryIds,
   orderedCategories,
 }: {
+  userId: string;
   months: string[];
   categoryIds: number[] | null;
   orderedCategories: Awaited<ReturnType<typeof getCategories>>;
@@ -123,7 +131,7 @@ async function CategorySharePanel({
   const rows =
     orderedCategories.length === 0
       ? []
-      : await getExpendituresByCategory({ months, categoryIds });
+      : await getExpendituresByCategory(userId, { months, categoryIds });
 
   return <CategoryShare rows={rows} categories={orderedCategories} />;
 }

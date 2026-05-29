@@ -6,13 +6,37 @@ Audit findings, ordered by severity.
 
 ## Critical — silent corruption or security exposure
 
-_(none)_
+### Seed files
+Check if seed logic corresponds current db schemas
+
+### Silent `BETTER_AUTH_SECRET` fallback in production
+`src/lib/auth.ts:8` passes `process.env.BETTER_AUTH_SECRET` to `betterAuth(...)` with no guard. If the env var is unset in production, Better Auth signs sessions with a default development value, which makes session tokens forgeable. Fail loud at module load:
+```ts
+if (process.env.NODE_ENV === "production" && !process.env.BETTER_AUTH_SECRET) {
+  throw new Error("BETTER_AUTH_SECRET must be set in production");
+}
+```
+Same treatment for `BETTER_AUTH_URL`.
+
+### `scripts/reset-local-db.mjs` has no host guard
+Drops `transactions`, `plans`, `categories`, `user`, `session`, `account`, `verification`, `_migrations` — all auth + app tables, cascaded. There is no check that `SQL_DB_HOST` is local; running this with prod env vars loaded would wipe RDS. Refuse unless host is `localhost`/`127.0.0.1`, or require an explicit `--yes-i-mean-it` flag.
 
 ---
 
 ## High — functional bugs in normal use
 
-_(none)_
+### Seed wipe uses multi-statement parameterized query (will throw at runtime)
+`scripts/seed.mjs:151-154` runs `client.query("DELETE FROM transactions WHERE user_id = $1; DELETE FROM plans WHERE user_id = $1; DELETE FROM categories WHERE user_id = $1", [ownerUserId])`. node-postgres's extended-query path (anything with `$n` placeholders) does not accept multiple statements — this throws "cannot insert multiple commands into a prepared statement" the first time `db:seed:init` runs. Split into three separate `client.query` calls.
+
+### Logged-in users can't reach the password-reset form
+`src/proxy.ts:19-21` redirects any signed-in user away from `/reset-password`. The forgot-password flow sends the user to `/reset-password?token=…`; if they still have a session cookie on the device they requested the reset from, the proxy bounces them to `/transactions` and they never see the form. Either allow `/reset-password` through unconditionally, or only when `?token=` is present.
+
+### No rate limiting on auth endpoints
+`src/lib/auth.ts` does not configure Better Auth's `rateLimit` block, so `/sign-in/email`, `/forgot-password`, and `/send-verification-email` are unbounded. At minimum:
+```ts
+rateLimit: { enabled: true, window: 60, max: 10 }
+```
+with stricter custom rules on sign-in and password-reset endpoints.
 
 ---
 
@@ -21,17 +45,20 @@ _(none)_
 ### Expeditures over time chart allows to select month that are not adjacent.
 We need to handle only adjacent months selection.
 
-### No auth, no rate limit
-Documented as intentional for single-user use, but if ever exposed past `localhost`, every server action is unauthenticated. Worth a guard if deployment is on the table.
+### `requireUser` redirects to `/login` with no return-to
+`src/lib/dal.ts:14` does `redirect("/login")` and the login page always pushes to `/transactions` afterward. Users trying to reach `/plan` or `/charts` get re-anchored to transactions. Pass a `?next=` param (validated against an allowlist of known routes before redirecting back).
+
+### Fresh-account empty state has no guidance
+A new user lands on `/transactions` with zero categories. The desktop inline form accepts a free-text `category_name` so it works, but the mobile create sheet and `/plan` show "add a category first" with no further nudge. Either auto-redirect zero-category users to `/categories`, or seed a starter category set in a Better Auth `after-create` hook.
+
+### Email HTML escapes `name` but not `url`
+`src/lib/email.ts:23,33` interpolates `${url}` into both an `href` attribute and a paragraph without escaping. Better Auth currently builds safe URLs, but a future change introducing a `"` in the callback path would break the anchor. Run `url` through `escapeHtml` (and ensure callers pre-encode via `encodeURI`).
+
+### Migration 006 won't update an existing owner password on re-run
+`src/db/migrations/006_backfill_owner_and_lock.sql` inserts the `account` row with `ON CONFLICT ("id") DO NOTHING`. Rotating `OWNER_PASSWORD_HASH` and re-running migrations is a silent no-op — the new hash is ignored. Probably intentional (one-time backfill; rotate via the forgot-password flow) but worth a comment in the migration.
 
 ### `deleteTransaction` skips id validation and returns nothing
 `src/actions/transactions.ts:85-89` reads `id = Number(formData.get("id"))` and runs `DELETE … WHERE id = $1` without checking `!Number.isFinite(id) || id <= 0`. Compare to `updateTransaction:69` which validates. Also returns implicit `void` while sibling actions return `ActionResult`. Today the form always sends a valid id, so it's latent — but inconsistent with the rest of the file.
-
-### `updateCategory` skips id validation
-`src/actions/categories.ts:52-75` parses `id` but never validates it as a positive integer before `UPDATE … WHERE id = $3`. Same shape as the `deleteTransaction` issue. Add `!Number.isFinite(id) || id <= 0` check.
-
-### `category_id` truthiness check is inconsistent
-`src/actions/transactions.ts:72` and `src/actions/plans.ts:13` use `if (!category_id)`. After `Number()`, this catches `NaN` and `0` but lets any other value through, including negatives. Safe in practice but should be `!Number.isFinite(category_id) || category_id <= 0` to match the rest of the file.
 
 ---
 
@@ -45,4 +72,10 @@ Server actions validate `YYYY-MM-DD` / `YYYY-MM` with regex, so today the only w
 
 ### `getPlansForMonth` groups by `c.priority` without selecting it
 `src/db/queries.ts:72` lists `c.priority` in `GROUP BY` but not in the `SELECT`. PostgreSQL allows it because `c.id` is the PK (functional dependency), so `c.priority` in the GROUP BY is redundant. Drop it from the GROUP BY or add it to the SELECT — either makes the intent explicit.
+
+### Proxy is a cookie-presence check, not session validation
+`src/proxy.ts:14` uses `getSessionCookie(request)` which only checks the cookie exists, not that the session is valid. Revoked or expired sessions still pass the proxy and only fail at `requireUser()` on the page. By design (no DB calls in proxy) and `dal.ts` does the real check, but worth a comment so future readers don't mistake proxy for the security boundary.
+
+### `.env example` filename has a literal space
+Should be `.env.example`. Trivial.
 

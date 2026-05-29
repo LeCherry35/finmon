@@ -5,6 +5,7 @@ import {
   getCategories,
   getAvailableMonths,
 } from "@/db/queries";
+import { requireUser } from "@/lib/dal";
 import TransactionRow from "@/components/TransactionRow";
 import TransactionCreateForm from "@/components/TransactionCreateForm";
 import TransactionCreateSheet from "@/components/TransactionCreateSheet";
@@ -14,17 +15,18 @@ import { parseFilters, resolveFilters } from "@/lib/filters";
 export default async function TransactionsPage(
   props: PageProps<"/transactions">,
 ) {
+  const { id: userId } = await requireUser();
   const sp = await props.searchParams;
   const filters = parseFilters(sp);
 
   const [categories, availableMonths] = await Promise.all([
-    getCategories(),
-    getAvailableMonths(),
+    getCategories(userId),
+    getAvailableMonths(userId),
   ]);
 
   const resolved = resolveFilters(filters);
 
-  const transactions = await getTransactions({
+  const transactions = await getTransactions(userId, {
     months: resolved.months,
     categoryIds: resolved.categoryIds,
   });

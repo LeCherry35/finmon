@@ -23,22 +23,24 @@ export type QueryFilters = {
   categoryIds?: number[] | null;
 };
 
-export async function getCategories(): Promise<Category[]> {
+export async function getCategories(userId: string): Promise<Category[]> {
   const { rows } = await pool.query<Category>(
-    "SELECT * FROM categories ORDER BY priority DESC, name ASC"
+    "SELECT * FROM categories WHERE user_id = $1 ORDER BY priority DESC, name ASC",
+    [userId],
   );
   return rows;
 }
 
-export async function getAvailableMonths(): Promise<string[]> {
+export async function getAvailableMonths(userId: string): Promise<string[]> {
   const { rows } = await pool.query<{ month: string }>(
     `SELECT month FROM (
-       SELECT DISTINCT LEFT(date, 7) AS month FROM transactions
+       SELECT DISTINCT LEFT(date, 7) AS month FROM transactions WHERE user_id = $1
        UNION
-       SELECT DISTINCT month FROM plans
+       SELECT DISTINCT month FROM plans WHERE user_id = $1
      ) m
      WHERE month ~ '^\\d{4}-\\d{2}$'
-     ORDER BY month DESC`
+     ORDER BY month DESC`,
+    [userId],
   );
   return rows.map((r) => r.month);
 }
@@ -52,23 +54,26 @@ export type PlanEntry = {
 };
 
 export async function getPlansForMonth(
+  userId: string,
   month: string,
   categoryIds?: number[] | null,
 ): Promise<PlanEntry[]> {
-  const params: unknown[] = [month];
+  const params: unknown[] = [userId, month];
   let categoryClause = "";
   if (categoryIds && categoryIds.length >= 0) {
     params.push(categoryIds);
-    categoryClause = ` WHERE c.id = ANY($${params.length}::int[])`;
+    categoryClause = ` AND c.id = ANY($${params.length}::int[])`;
   }
   const { rows } = await pool.query<PlanEntry>(
     `SELECT c.id AS category_id, c.name AS category_name,
             p.id AS plan_id, p.amount,
             COALESCE(SUM(CASE WHEN t.type = 'spend' THEN t.amount END), 0) AS spent
      FROM categories c
-     LEFT JOIN plans p ON p.category_id = c.id AND p.month = $1
-     LEFT JOIN transactions t ON t.category_id = c.id AND LEFT(t.date, 7) = $1
-     ${categoryClause}
+     LEFT JOIN plans p
+       ON p.category_id = c.id AND p.month = $2 AND p.user_id = $1
+     LEFT JOIN transactions t
+       ON t.category_id = c.id AND LEFT(t.date, 7) = $2 AND t.user_id = $1
+     WHERE c.user_id = $1${categoryClause}
      GROUP BY c.id, c.name, c.priority, p.id, p.amount
      ORDER BY c.priority DESC, c.name ASC`,
     params,
@@ -84,15 +89,16 @@ export type PlanSummaryEntry = {
 };
 
 export async function getPlansSummary(
+  userId: string,
   months: string[],
   categoryIds?: number[] | null,
 ): Promise<PlanSummaryEntry[]> {
   if (months.length === 0) return [];
-  const params: unknown[] = [months];
+  const params: unknown[] = [userId, months];
   let categoryClause = "";
   if (categoryIds && categoryIds.length >= 0) {
     params.push(categoryIds);
-    categoryClause = ` WHERE c.id = ANY($${params.length}::int[])`;
+    categoryClause = ` AND c.id = ANY($${params.length}::int[])`;
   }
   const { rows } = await pool.query<PlanSummaryEntry>(
     `SELECT c.id AS category_id, c.name AS category_name,
@@ -102,16 +108,16 @@ export async function getPlansSummary(
      LEFT JOIN (
        SELECT category_id, SUM(amount) AS amount
        FROM plans
-       WHERE month = ANY($1::text[])
+       WHERE user_id = $1 AND month = ANY($2::text[])
        GROUP BY category_id
      ) plan_sum ON plan_sum.category_id = c.id
      LEFT JOIN (
        SELECT category_id, SUM(amount) AS spent
        FROM transactions
-       WHERE type = 'spend' AND LEFT(date, 7) = ANY($1::text[])
+       WHERE user_id = $1 AND type = 'spend' AND LEFT(date, 7) = ANY($2::text[])
        GROUP BY category_id
      ) spent_sum ON spent_sum.category_id = c.id
-     ${categoryClause}
+     WHERE c.user_id = $1${categoryClause}
      ORDER BY c.priority DESC, c.name ASC`,
     params,
   );
@@ -119,10 +125,11 @@ export async function getPlansSummary(
 }
 
 export async function getExpendituresByCategory(
+  userId: string,
   f: QueryFilters = {},
 ): Promise<ExpenditureByCategory[]> {
-  const where: string[] = ["t.type = 'spend'"];
-  const params: unknown[] = [];
+  const where: string[] = ["t.user_id = $1", "t.type = 'spend'"];
+  const params: unknown[] = [userId];
 
   if (f.months && f.months.length >= 0) {
     params.push(f.months);
@@ -146,6 +153,7 @@ export async function getExpendituresByCategory(
 }
 
 export async function getExpenditureSeries(
+  userId: string,
   months: string[],
   categoryIds: number[] | null,
   bucket: Bucket,
@@ -154,7 +162,7 @@ export async function getExpenditureSeries(
 
   const bucketExpr = bucket === "day" ? "t.date" : "LEFT(t.date, 7)";
 
-  const params: unknown[] = [months];
+  const params: unknown[] = [userId, months];
   let categoryClause = "";
   if (categoryIds && categoryIds.length >= 0) {
     params.push(categoryIds);
@@ -169,8 +177,9 @@ export async function getExpenditureSeries(
             SUM(t.amount)::float8 AS total
      FROM transactions t
      JOIN categories c ON c.id = t.category_id
-     WHERE t.type = 'spend'
-       AND LEFT(t.date, 7) = ANY($1::text[])
+     WHERE t.user_id = $1
+       AND t.type = 'spend'
+       AND LEFT(t.date, 7) = ANY($2::text[])
        ${categoryClause}
      GROUP BY c.id, c.name, c.priority, bucket
      ORDER BY c.priority DESC, c.name ASC, bucket ASC`,
@@ -180,10 +189,11 @@ export async function getExpenditureSeries(
 }
 
 export async function getTransactions(
+  userId: string,
   f: QueryFilters = {},
 ): Promise<Transaction[]> {
-  const where: string[] = [];
-  const params: unknown[] = [];
+  const where: string[] = ["t.user_id = $1"];
+  const params: unknown[] = [userId];
 
   if (f.months && f.months.length >= 0) {
     params.push(f.months);
@@ -194,13 +204,11 @@ export async function getTransactions(
     where.push(`t.category_id = ANY($${params.length}::int[])`);
   }
 
-  const whereClause = where.length === 0 ? "" : ` WHERE ${where.join(" AND ")}`;
-
   const { rows } = await pool.query<Transaction>(
     `SELECT t.*, c.name AS category_name
      FROM transactions t
      JOIN categories c ON c.id = t.category_id
-     ${whereClause}
+     WHERE ${where.join(" AND ")}
      ORDER BY t.date DESC, t.id DESC`,
     params,
   );

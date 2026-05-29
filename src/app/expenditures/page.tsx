@@ -5,23 +5,25 @@ import {
   getCategories,
   getAvailableMonths,
 } from "@/db/queries";
+import { requireUser } from "@/lib/dal";
 import FilterPanel from "@/components/FilterPanel";
 import { parseFilters, resolveFilters } from "@/lib/filters";
 
 export default async function ExpendituresPage(
   props: PageProps<"/expenditures">,
 ) {
+  const { id: userId } = await requireUser();
   const sp = await props.searchParams;
   const filters = parseFilters(sp);
 
   const [categories, availableMonths] = await Promise.all([
-    getCategories(),
-    getAvailableMonths(),
+    getCategories(userId),
+    getAvailableMonths(userId),
   ]);
 
   const resolved = resolveFilters(filters);
 
-  const rows = await getExpendituresByCategory({
+  const rows = await getExpendituresByCategory(userId, {
     months: resolved.months,
     categoryIds: resolved.categoryIds,
   });

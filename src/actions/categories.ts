@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { pool } from "@/db";
+import { requireUser } from "@/lib/dal";
 import type { ActionResult } from "@/actions/transactions";
 
 export type Category = { id: number; name: string; priority: number };
@@ -12,6 +13,8 @@ export async function createCategory(
   prevState: CategoryFormState,
   formData: FormData,
 ): Promise<CategoryFormState> {
+  const { id: userId } = await requireUser();
+
   const name = ((formData.get("name") as string | null) ?? "").trim();
   const priorityRaw = ((formData.get("priority") as string | null) ?? "").trim();
   const priority = priorityRaw === "" ? 5 : Number(priorityRaw);
@@ -23,8 +26,8 @@ export async function createCategory(
 
   try {
     await pool.query(
-      "INSERT INTO categories (name, priority) VALUES ($1, $2)",
-      [name, priority]
+      "INSERT INTO categories (name, priority, user_id) VALUES ($1, $2, $3)",
+      [name, priority, userId]
     );
   } catch (e) {
     if (isUniqueViolation(e))
@@ -50,18 +53,21 @@ function isUniqueViolation(err: unknown): boolean {
 }
 
 export async function updateCategory(formData: FormData): Promise<ActionResult> {
+  const { id: userId } = await requireUser();
+
   const id = Number(formData.get("id"));
   const name = ((formData.get("name") as string | null) ?? "").trim();
   const priority = Number(formData.get("priority"));
 
+  if (!Number.isFinite(id) || id <= 0) return { ok: false, error: "Invalid category" };
   if (!name) return { ok: false, error: "Name is required" };
   if (!Number.isFinite(priority) || priority < 0 || priority > 10)
     return { ok: false, error: "Priority must be 0–10" };
 
   try {
     await pool.query(
-      "UPDATE categories SET name = $1, priority = $2 WHERE id = $3",
-      [name, priority, id]
+      "UPDATE categories SET name = $1, priority = $2 WHERE id = $3 AND user_id = $4",
+      [name, priority, id, userId]
     );
   } catch (e) {
     if (isUniqueViolation(e))
@@ -73,4 +79,3 @@ export async function updateCategory(formData: FormData): Promise<ActionResult> 
   revalidatePath("/transactions");
   return { ok: true };
 }
-

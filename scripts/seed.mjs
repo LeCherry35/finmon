@@ -140,17 +140,24 @@ async function bulkInsert(client, table, columns, rows) {
 }
 
 async function runInit(pool) {
+  const ownerUserId = process.env.OWNER_USER_ID;
+  if (!ownerUserId) {
+    console.error("OWNER_USER_ID env var required (matches migration 006).");
+    process.exit(1);
+  }
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    await client.query("TRUNCATE categories, plans, transactions RESTART IDENTITY CASCADE");
+    await client.query("DELETE FROM transactions WHERE user_id = $1", [ownerUserId]);
+    await client.query("DELETE FROM plans WHERE user_id = $1", [ownerUserId]);
+    await client.query("DELETE FROM categories WHERE user_id = $1", [ownerUserId]);
 
     const catPlaceholders = CATEGORIES
-      .map((_, i) => `($${i * 2 + 1}, $${i * 2 + 2})`)
+      .map((_, i) => `($${i * 3 + 1}, $${i * 3 + 2}, $${i * 3 + 3})`)
       .join(", ");
-    const catValues = CATEGORIES.flatMap((c) => [c.name, c.priority]);
+    const catValues = CATEGORIES.flatMap((c) => [c.name, c.priority, ownerUserId]);
     const { rows: catRows } = await client.query(
-      `INSERT INTO categories (name, priority) VALUES ${catPlaceholders} RETURNING id, name`,
+      `INSERT INTO categories (name, priority, user_id) VALUES ${catPlaceholders} RETURNING id, name`,
       catValues
     );
     const idByName = new Map(catRows.map((r) => [r.name, r.id]));
@@ -164,7 +171,9 @@ async function runInit(pool) {
 
     const transactions = [];
     for (const day of eachDay(start, today)) {
-      transactions.push(...generateDayTransactions(rng, day, idByName));
+      transactions.push(
+        ...generateDayTransactions(rng, day, idByName).map((r) => ({ ...r, user_id: ownerUserId })),
+      );
     }
 
     const planRows = [];
@@ -180,17 +189,17 @@ async function runInit(pool) {
         if (cat.type !== "spend") continue;
         const amount = PLAN_AMOUNTS[cat.name];
         if (amount == null) continue;
-        planRows.push({ category_id: idByName.get(cat.name), month, amount });
+        planRows.push({ category_id: idByName.get(cat.name), month, amount, user_id: ownerUserId });
       }
     }
 
     await bulkInsert(
       client,
       "transactions",
-      ["amount", "type", "category_id", "date", "note"],
+      ["amount", "type", "category_id", "date", "note", "user_id"],
       transactions
     );
-    await bulkInsert(client, "plans", ["category_id", "month", "amount"], planRows);
+    await bulkInsert(client, "plans", ["category_id", "month", "amount", "user_id"], planRows);
 
     await client.query("COMMIT");
     console.log(
@@ -211,7 +220,16 @@ async function runMonth(pool, monthArg) {
     process.exit(1);
   }
 
-  const { rows: catRows } = await pool.query("SELECT id, name FROM categories");
+  const ownerUserId = process.env.OWNER_USER_ID;
+  if (!ownerUserId) {
+    console.error("OWNER_USER_ID env var required.");
+    process.exit(1);
+  }
+
+  const { rows: catRows } = await pool.query(
+    "SELECT id, name FROM categories WHERE user_id = $1",
+    [ownerUserId]
+  );
   if (catRows.length === 0) {
     console.error("No categories found. Run 'npm run db:seed:init' first.");
     process.exit(1);
@@ -234,13 +252,15 @@ async function runMonth(pool, monthArg) {
   const transactions = [];
   for (let day = 1; day <= lastDay; day++) {
     const d = new Date(Date.UTC(year, n - 1, day));
-    transactions.push(...generateDayTransactions(rng, d, idByName));
+    transactions.push(
+      ...generateDayTransactions(rng, d, idByName).map((r) => ({ ...r, user_id: ownerUserId })),
+    );
   }
 
   await bulkInsert(
     pool,
     "transactions",
-    ["amount", "type", "category_id", "date", "note"],
+    ["amount", "type", "category_id", "date", "note", "user_id"],
     transactions
   );
 
