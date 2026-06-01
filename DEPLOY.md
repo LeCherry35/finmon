@@ -72,6 +72,22 @@ Write-Host "Deployment triggered successfully!" -ForegroundColor Green
 
 ---
 
+## Known Limitations & Deferred Work
+
+Current production trade-offs. Most share a single root cause — **there is no load balancer or HTTPS in front of the service yet** — so the app is reached by the task's raw public IP over plain HTTP. Several of these live only as code comments today; they are consolidated here.
+
+| Limitation | Where it lives in code | Why / current workaround | Resolved by |
+|---|---|---|---|
+| **Public IP changes every deploy** | — (`DEPLOY.md`, "Accessing the App") | The ECS task gets a new public IP on every restart; there's no stable URL. | Add an **ALB** in front of the service. |
+| **`BETTER_AUTH_URL` left unset** | `src/lib/auth.ts` (`baseURL`) | No stable origin to point it at (see above), so Better Auth infers the origin from the request instead. | Set `BETTER_AUTH_URL` once the ALB provides a stable URL. |
+| **Insecure session cookies** | `src/lib/auth.ts` (`advanced.useSecureCookies: false`) | App is served over plain HTTP. Better Auth computes cookie config at init with no request, falls back to `isProduction` → marks the session cookie `Secure` → browsers drop it over HTTP → login silently bounces back to `/login`. Forcing non-secure cookies keeps sessions working over HTTP. | Front the app with **HTTPS (ALB + ACM)**, then remove `useSecureCookies: false` (or set it to `true`). |
+| **No TLS / encryption in transit** | — | Traffic between the browser and the task is unencrypted HTTP. | Terminate TLS at an **ALB + ACM** certificate. |
+| **Email auth flows disabled** | `src/lib/auth.ts` (commented hooks), `src/lib/email.ts` | Email verification, password reset, and verification-email sending are commented out — sign-up uses no verification gate and auto sign-in. | Re-enable the commented Better Auth hooks once `RESEND_API_KEY` / `RESEND_FROM_EMAIL` are configured in prod. |
+| **`PGSSLMODE=require` is redundant** | `src/db/index.ts` (explicit `ssl` config) | The code passes an explicit `ssl` config which `pg` prefers over libpq env vars. Harmless. | Safe to remove from the task definition in a follow-up. |
+| **RDS cert not verified** | `src/db/index.ts` (`rejectUnauthorized: false`) | RDS CA certs aren't in Node's default trust store; strict verification crashes the container at startup. Connection is still encrypted. | Bundle the RDS CA bundle into the image and load via `ssl.ca` (see SSL note below). |
+
+---
+
 ## Environment Variables
 
 The app requires the following environment variables, configured in the ECS Task Definition:
@@ -84,6 +100,8 @@ The app requires the following environment variables, configured in the ECS Task
 | `SQL_DB_USER` | postgres |
 | `SQL_DB_PASSWORD` |  |
 | `PGSSLMODE` | `require` — **legacy/redundant**; see SSL note below |
+| `BETTER_AUTH_SECRET` | **Required in prod.** Session-signing key (`openssl rand -base64 32`). The app throws at startup if this is unset while `NODE_ENV=production` — without it Better Auth falls back to a dev key and session tokens become forgeable. Keep it **stable**: rotating it invalidates all existing sessions. |
+| `BETTER_AUTH_URL` | **Intentionally NOT set.** Would be the full origin (`http://<ip>:3000`), but the task's public IP changes every deploy. Left unset so Better Auth infers the origin from the request. Set this once an ALB gives a stable URL. |
 
 ### About SSL
 

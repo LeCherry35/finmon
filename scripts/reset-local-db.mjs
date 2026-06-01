@@ -1,5 +1,18 @@
 import pg from "pg";
 
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", ""]);
+const host = process.env.SQL_DB_HOST ?? "";
+const override = process.argv.includes("--yes-i-mean-it");
+
+if (!LOCAL_HOSTS.has(host) && !override) {
+  console.error(
+    `Refusing to drop tables: SQL_DB_HOST is "${host}", which is not local.\n` +
+      `This script drops ALL auth + app tables (CASCADE). If you really mean to\n` +
+      `reset a non-local database, re-run with --yes-i-mean-it.`
+  );
+  process.exit(1);
+}
+
 const pool = new pg.Pool({
   host: process.env.SQL_DB_HOST,
   port: Number(process.env.SQL_DB_PORT),

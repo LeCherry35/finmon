@@ -2,31 +2,17 @@
 
 Audit findings, ordered by severity.
 
----
+## How issues are documented
 
-## Critical — silent corruption or security exposure
-
-### Seed files
-Check if seed logic corresponds current db schemas
-
-### Silent `BETTER_AUTH_SECRET` fallback in production
-`src/lib/auth.ts:8` passes `process.env.BETTER_AUTH_SECRET` to `betterAuth(...)` with no guard. If the env var is unset in production, Better Auth signs sessions with a default development value, which makes session tokens forgeable. Fail loud at module load:
-```ts
-if (process.env.NODE_ENV === "production" && !process.env.BETTER_AUTH_SECRET) {
-  throw new Error("BETTER_AUTH_SECRET must be set in production");
-}
-```
-Same treatment for `BETTER_AUTH_URL`.
-
-### `scripts/reset-local-db.mjs` has no host guard
-Drops `transactions`, `plans`, `categories`, `user`, `session`, `account`, `verification`, `_migrations` — all auth + app tables, cascaded. There is no check that `SQL_DB_HOST` is local; running this with prod env vars loaded would wipe RDS. Refuse unless host is `localhost`/`127.0.0.1`, or require an explicit `--yes-i-mean-it` flag.
+1. **When an issue is found**, add it here under the matching severity level
+   (Critical / High / Medium / Low) as a `### Title` followed by a description.
+2. **When an issue is fixed**, remove it from this file and move it to
+   [`FIXED.md`](FIXED.md) under the current date (`DD.MM.YYYY` heading), adding a
+   short **Fix:** note describing what changed.
 
 ---
 
 ## High — functional bugs in normal use
-
-### Seed wipe uses multi-statement parameterized query (will throw at runtime)
-`scripts/seed.mjs:151-154` runs `client.query("DELETE FROM transactions WHERE user_id = $1; DELETE FROM plans WHERE user_id = $1; DELETE FROM categories WHERE user_id = $1", [ownerUserId])`. node-postgres's extended-query path (anything with `$n` placeholders) does not accept multiple statements — this throws "cannot insert multiple commands into a prepared statement" the first time `db:seed:init` runs. Split into three separate `client.query` calls.
 
 ### Logged-in users can't reach the password-reset form
 `src/proxy.ts:19-21` redirects any signed-in user away from `/reset-password`. The forgot-password flow sends the user to `/reset-password?token=…`; if they still have a session cookie on the device they requested the reset from, the proxy bounces them to `/transactions` and they never see the form. Either allow `/reset-password` through unconditionally, or only when `?token=` is present.
