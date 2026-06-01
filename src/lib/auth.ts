@@ -32,6 +32,26 @@ export const auth = betterAuth({
   //     await sendVerificationEmail({ user, url });
   //   },
   // },
+  // Throttle Better Auth's HTTP endpoints to blunt brute-force and account
+  // enumeration. `enabled: true` turns this on in all envs (Better Auth's
+  // default only enables it in production). In-memory store is the default —
+  // fine for the single prod task; switch to `storage: "database"` (needs the
+  // rateLimit table) if the deploy ever scales to multiple instances. Limits
+  // are per-IP per window (seconds). Custom rules use Better Auth's API paths
+  // (note: `/forget-password`, not the app's `/forgot-password` route).
+  rateLimit: {
+    enabled: true,
+    window: 60,
+    max: 60,
+    customRules: {
+      "/sign-in/email": { window: 60, max: 5 },
+      "/sign-up/email": { window: 60, max: 5 },
+      "/forget-password": { window: 60, max: 3 },
+      "/request-password-reset": { window: 60, max: 3 },
+      "/reset-password": { window: 60, max: 5 },
+      "/send-verification-email": { window: 60, max: 3 },
+    },
+  },
   advanced: {
     // The app is served over plain HTTP (accessed by raw task IP, no TLS), and the
     // container runs with NODE_ENV=production. Better Auth's cookie config is computed

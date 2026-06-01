@@ -33,7 +33,15 @@ export function proxy(request: NextRequest) {
     return response;
   }
 
-  if (hasSession && onAuthPage) {
+  // A signed-in user can legitimately hold a reset link (they requested the
+  // reset from this device and still have a session cookie). Let
+  // /reset-password?token=… through so the form renders instead of bouncing
+  // them to /transactions. A bare /reset-password (no token) is still treated
+  // as an auth page and redirected away.
+  const isResetWithToken =
+    path === "/reset-password" && url.searchParams.has("token");
+
+  if (hasSession && onAuthPage && !isResetWithToken) {
     return NextResponse.redirect(new URL("/transactions", request.url));
   }
   if (!hasSession && !onAuthPage) {

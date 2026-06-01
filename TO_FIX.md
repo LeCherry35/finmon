@@ -12,19 +12,11 @@ Audit findings, ordered by severity.
 
 ---
 
+## Critical — silent corruption or security exposure
+
+---
+
 ## High — functional bugs in normal use
-
-### Logged-in users can't reach the password-reset form
-`src/proxy.ts:36-37` redirects any signed-in user away from `/reset-password` (it's in `AUTH_PATHS`). The forgot-password flow sends the user to `/reset-password?token=…`; if they still have a session cookie on the device they requested the reset from, the proxy bounces them to `/transactions` and they never see the form. Either allow `/reset-password` through unconditionally, or only when `?token=` is present.
-
-> Note: the email flows that trigger this (forgot-password / reset emails) are currently **disabled** — the Better Auth hooks in `src/lib/auth.ts` are commented out (see DEPLOY.md → "Email auth flows disabled"). So this only bites a user who navigates to `/reset-password` manually today; it becomes live again once email is re-enabled.
-
-### No rate limiting on auth endpoints
-`src/lib/auth.ts` does not configure Better Auth's `rateLimit` block, so `/sign-in/email`, `/forgot-password`, and `/send-verification-email` are unbounded. At minimum:
-```ts
-rateLimit: { enabled: true, window: 60, max: 10 }
-```
-with stricter custom rules on sign-in and password-reset endpoints.
 
 ---
 

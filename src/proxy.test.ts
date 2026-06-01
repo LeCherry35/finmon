@@ -50,6 +50,19 @@ describe("proxy", () => {
     expect(res.headers.get("x-middleware-next")).toBe("1");
   });
 
+  it("lets a signed-in user reach /reset-password when a token is present", () => {
+    getSessionCookie.mockReturnValue("token");
+    const res = proxy(req("/reset-password?token=abc"));
+    expect(res.headers.get("x-middleware-next")).toBe("1");
+  });
+
+  it("bounces a signed-in user off /reset-password with no token", () => {
+    getSessionCookie.mockReturnValue("token");
+    const res = proxy(req("/reset-password"));
+    expect(res.status).toBe(307);
+    expect(location(res).pathname).toBe("/transactions");
+  });
+
   it("clears session cookies and strips ?stale on an auth page", () => {
     getSessionCookie.mockReturnValue("token");
     const res = proxy(req("/login?stale=1"));
