@@ -46,7 +46,7 @@ A new user lands on `/transactions` with zero categories. The desktop inline for
 `src/db/migrations/006_backfill_owner_and_lock.sql` inserts the `account` row with `ON CONFLICT ("id") DO NOTHING`. Rotating `OWNER_PASSWORD_HASH` and re-running migrations is a silent no-op — the new hash is ignored. Probably intentional (one-time backfill; rotate via the forgot-password flow) but worth a comment in the migration.
 
 ### `deleteTransaction` skips id validation and returns nothing
-`src/actions/transactions.ts:96-101` reads `id = Number(formData.get("id"))` and runs `DELETE … WHERE id = $1 AND user_id = $2` without checking `!Number.isFinite(id) || id <= 0`. Compare to `updateTransaction:74` which validates. Also returns implicit `void` while sibling actions return `ActionResult`. Today the form always sends a valid id, so it's latent — but inconsistent with the rest of the file.
+`src/actions/transactions.ts:94-99` reads `id = Number(formData.get("id"))` and runs `DELETE … WHERE id = $1 AND user_id = $2` without checking `!Number.isFinite(id) || id <= 0`. Compare to `updateTransaction:75` which validates. Also returns implicit `void` while sibling actions return `ActionResult`. Today the form always sends a valid id, so it's latent — but inconsistent with the rest of the file.
 
 ---
 
@@ -55,11 +55,8 @@ A new user lands on `/transactions` with zero categories. The desktop inline for
 ### Date / month columns accept arbitrary strings — DB has no CHECK
 Server actions validate `YYYY-MM-DD` / `YYYY-MM` with regex, so today the only writers are guarded. No DB-level constraint as defense-in-depth — a future code path that bypasses validation could silently insert garbage that falls out of `LEFT(date,7) = $month` filters. Fix would be a migration adding `CHECK (date ~ '^\d{4}-\d{2}-\d{2}$')` (and equivalent for `plans.month`).
 
-### `length >= 0` in `queries.ts` is dead code
-`src/db/queries.ts:63, 99, 134, 138, 167, 198, 202` use `if (arr && arr.length >= 0)`. The `length >= 0` is always true when the array is non-null, so it reads like a typo for `> 0`. Current behavior is intentional (empty array means "user deselected everything → show nothing", matching the "No categories" UI summary) — Postgres `= ANY('{}'::int[])` correctly returns zero rows. Simplify each site to `if (arr)` to make intent clear without changing behavior.
-
 ### `getPlansForMonth` groups by `c.priority` without selecting it
-`src/db/queries.ts:77` lists `c.priority` in `GROUP BY` but not in the `SELECT`. PostgreSQL allows it because `c.id` is the PK (functional dependency), so `c.priority` in the GROUP BY is redundant. Drop it from the GROUP BY or add it to the SELECT — either makes the intent explicit.
+`src/db/queries.ts:105` lists `c.priority` in `GROUP BY` but not in the `SELECT`. PostgreSQL allows it because `c.id` is the PK (functional dependency), so `c.priority` in the GROUP BY is redundant. Drop it from the GROUP BY or add it to the SELECT — either makes the intent explicit.
 
 ### Proxy is a cookie-presence check, not session validation
 `src/proxy.ts:23` uses `getSessionCookie(request)` which only checks the cookie exists, not that the session is valid. Revoked or expired sessions still pass the proxy and only fail at `requireUser()` on the page. By design (no DB calls in proxy) and `dal.ts` does the real check, but worth a comment so future readers don't mistake proxy for the security boundary.

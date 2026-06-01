@@ -221,7 +221,7 @@ with E2E as a separate job behind a Postgres service container.
 
 ## Coverage status
 
-150 tests (1 `todo`) across 18 files. Targeted modules are at/near 100%; overall
+152 tests (1 `todo`) across 18 files. Targeted modules are at/near 100%; overall
 line coverage is dragged down only by server components/pages and infra files
 (`auth.ts`, `db/index.ts`) that aren't unit-tested. (See `TESTS_COVERAGE.md` for
 the full plan.)

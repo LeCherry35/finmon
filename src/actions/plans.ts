@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { pool } from "@/db";
+import { userOwnsCategory } from "@/db/queries";
 import { requireUser } from "@/lib/dal";
 import { MONTH_RE } from "@/lib/filters";
 import type { ActionResult } from "@/actions/transactions";
@@ -19,11 +20,8 @@ export async function upsertPlan(formData: FormData): Promise<ActionResult> {
   if (!Number.isFinite(amount) || amount <= 0)
     return { ok: false, error: "Amount must be positive" };
 
-  const owns = await pool.query(
-    "SELECT 1 FROM categories WHERE id = $1 AND user_id = $2",
-    [category_id, userId]
-  );
-  if (owns.rowCount === 0) return { ok: false, error: "Invalid category" };
+  if (!(await userOwnsCategory(userId, category_id)))
+    return { ok: false, error: "Invalid category" };
 
   await pool.query(
     `INSERT INTO plans (category_id, month, amount, user_id) VALUES ($1, $2, $3, $4)

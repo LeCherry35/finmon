@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { pool } from "@/db";
+import { userOwnsCategory } from "@/db/queries";
 import { requireUser } from "@/lib/dal";
 
 export type Transaction = {
@@ -78,11 +79,8 @@ export async function updateTransaction(formData: FormData): Promise<ActionResul
   if (!date) return { ok: false, error: "Date is required" };
   if (!DATE_RE.test(date)) return { ok: false, error: "Date must be YYYY-MM-DD" };
 
-  const owns = await pool.query(
-    "SELECT 1 FROM categories WHERE id = $1 AND user_id = $2",
-    [category_id, userId]
-  );
-  if (owns.rowCount === 0) return { ok: false, error: "Invalid category" };
+  if (!(await userOwnsCategory(userId, category_id)))
+    return { ok: false, error: "Invalid category" };
 
   await pool.query(
     "UPDATE transactions SET amount = $1, type = $2, category_id = $3, date = $4, note = $5 WHERE id = $6 AND user_id = $7",

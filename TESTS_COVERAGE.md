@@ -3,7 +3,7 @@
 What finmon's tests cover today, and what's still planned. For *how* the tests
 work — stack, mocking seams, fixtures, gotchas — see [`TESTS.md`](./TESTS.md).
 
-**Where we are:** **150 tests + 1 `todo`** across 18 files, all green. Every
+**Where we are:** **152 tests + 1 `todo`** across 18 files, all green. Every
 layer below the UI is unit-tested; the gaps left are a real-Postgres tier, full
 end-to-end flows, and the CI gate.
 

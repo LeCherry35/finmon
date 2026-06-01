@@ -11,6 +11,7 @@ import {
   getPlansForMonth,
   getPlansSummary,
   getTransactions,
+  userOwnsCategory,
 } from "@/db/queries";
 
 const USER = "user-1";
@@ -138,6 +139,21 @@ describe("getTransactions", () => {
     await getTransactions(USER, { months: ["2026-06"], categoryIds: [3] });
     const { params } = lastCall();
     expect(params).toEqual([USER, ["2026-06"], [3]]);
+  });
+});
+
+describe("userOwnsCategory", () => {
+  it("returns true and scopes the lookup to the user when a row matches", async () => {
+    query.mockResolvedValueOnce({ rowCount: 1 });
+    expect(await userOwnsCategory(USER, 3)).toBe(true);
+    const { sql, params } = lastCall();
+    expect(sql).toMatch(/FROM categories WHERE id = \$1 AND user_id = \$2/);
+    expect(params).toEqual([3, USER]);
+  });
+
+  it("returns false when no row matches", async () => {
+    query.mockResolvedValueOnce({ rowCount: 0 });
+    expect(await userOwnsCategory(USER, 3)).toBe(false);
   });
 });
 

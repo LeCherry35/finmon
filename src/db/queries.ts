@@ -23,12 +23,43 @@ export type QueryFilters = {
   categoryIds?: number[] | null;
 };
 
+/**
+ * Builds a `<column> = ANY($n::<type>[])` predicate, pushing `arr` onto `params`
+ * and binding it to the next 1-based placeholder. Returns "" when `arr` is
+ * null/undefined (no filter). An empty array still produces a predicate —
+ * `= ANY('{}')` matches no rows, the intended "everything deselected → show
+ * nothing" behavior of the filter UI.
+ */
+function anyArrayFilter(
+  column: string,
+  arr: readonly (string | number)[] | null | undefined,
+  type: "int" | "text",
+  params: unknown[],
+): string {
+  if (!arr) return "";
+  params.push(arr);
+  return `${column} = ANY($${params.length}::${type}[])`;
+}
+
 export async function getCategories(userId: string): Promise<Category[]> {
   const { rows } = await pool.query<Category>(
     "SELECT * FROM categories WHERE user_id = $1 ORDER BY priority DESC, name ASC",
     [userId],
   );
   return rows;
+}
+
+/** Whether `categoryId` exists and belongs to `userId`. Used by writes to
+ *  reject cross-tenant or stale category references before mutating. */
+export async function userOwnsCategory(
+  userId: string,
+  categoryId: number,
+): Promise<boolean> {
+  const { rowCount } = await pool.query(
+    "SELECT 1 FROM categories WHERE id = $1 AND user_id = $2",
+    [categoryId, userId],
+  );
+  return (rowCount ?? 0) > 0;
 }
 
 export async function getAvailableMonths(userId: string): Promise<string[]> {
@@ -59,11 +90,8 @@ export async function getPlansForMonth(
   categoryIds?: number[] | null,
 ): Promise<PlanEntry[]> {
   const params: unknown[] = [userId, month];
-  let categoryClause = "";
-  if (categoryIds && categoryIds.length >= 0) {
-    params.push(categoryIds);
-    categoryClause = ` AND c.id = ANY($${params.length}::int[])`;
-  }
+  const cat = anyArrayFilter("c.id", categoryIds, "int", params);
+  const categoryClause = cat ? ` AND ${cat}` : "";
   const { rows } = await pool.query<PlanEntry>(
     `SELECT c.id AS category_id, c.name AS category_name,
             p.id AS plan_id, p.amount,
@@ -95,11 +123,8 @@ export async function getPlansSummary(
 ): Promise<PlanSummaryEntry[]> {
   if (months.length === 0) return [];
   const params: unknown[] = [userId, months];
-  let categoryClause = "";
-  if (categoryIds && categoryIds.length >= 0) {
-    params.push(categoryIds);
-    categoryClause = ` AND c.id = ANY($${params.length}::int[])`;
-  }
+  const cat = anyArrayFilter("c.id", categoryIds, "int", params);
+  const categoryClause = cat ? ` AND ${cat}` : "";
   const { rows } = await pool.query<PlanSummaryEntry>(
     `SELECT c.id AS category_id, c.name AS category_name,
             COALESCE(plan_sum.amount, 0) AS amount,
@@ -131,14 +156,10 @@ export async function getExpendituresByCategory(
   const where: string[] = ["t.user_id = $1", "t.type = 'spend'"];
   const params: unknown[] = [userId];
 
-  if (f.months && f.months.length >= 0) {
-    params.push(f.months);
-    where.push(`LEFT(t.date, 7) = ANY($${params.length}::text[])`);
-  }
-  if (f.categoryIds && f.categoryIds.length >= 0) {
-    params.push(f.categoryIds);
-    where.push(`t.category_id = ANY($${params.length}::int[])`);
-  }
+  const monthFilter = anyArrayFilter("LEFT(t.date, 7)", f.months, "text", params);
+  if (monthFilter) where.push(monthFilter);
+  const catFilter = anyArrayFilter("t.category_id", f.categoryIds, "int", params);
+  if (catFilter) where.push(catFilter);
 
   const { rows } = await pool.query<ExpenditureByCategory>(
     `SELECT c.id AS category_id, c.name AS category_name, SUM(t.amount) AS total, COUNT(*)::INT AS count
@@ -163,11 +184,8 @@ export async function getExpenditureSeries(
   const bucketExpr = bucket === "day" ? "t.date" : "LEFT(t.date, 7)";
 
   const params: unknown[] = [userId, months];
-  let categoryClause = "";
-  if (categoryIds && categoryIds.length >= 0) {
-    params.push(categoryIds);
-    categoryClause = ` AND t.category_id = ANY($${params.length}::int[])`;
-  }
+  const cat = anyArrayFilter("t.category_id", categoryIds, "int", params);
+  const categoryClause = cat ? ` AND ${cat}` : "";
 
   const { rows } = await pool.query<ExpenditureSeriesRow>(
     `SELECT c.id AS category_id,
@@ -195,14 +213,10 @@ export async function getTransactions(
   const where: string[] = ["t.user_id = $1"];
   const params: unknown[] = [userId];
 
-  if (f.months && f.months.length >= 0) {
-    params.push(f.months);
-    where.push(`LEFT(t.date, 7) = ANY($${params.length}::text[])`);
-  }
-  if (f.categoryIds && f.categoryIds.length >= 0) {
-    params.push(f.categoryIds);
-    where.push(`t.category_id = ANY($${params.length}::int[])`);
-  }
+  const monthFilter = anyArrayFilter("LEFT(t.date, 7)", f.months, "text", params);
+  if (monthFilter) where.push(monthFilter);
+  const catFilter = anyArrayFilter("t.category_id", f.categoryIds, "int", params);
+  if (catFilter) where.push(catFilter);
 
   const { rows } = await pool.query<Transaction>(
     `SELECT t.*, c.name AS category_name

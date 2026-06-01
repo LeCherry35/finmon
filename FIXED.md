@@ -1,5 +1,10 @@
 
 01.06.2026
+### ✅ FIXED — `length >= 0` dead code in `queries.ts` filter builders
+`src/db/queries.ts` repeated `if (arr && arr.length >= 0)` at seven sites. The `length >= 0` was always true for a non-null array — it read like a typo for `> 0` while actually meaning "is the filter present at all". The same 4-line param-push + clause-build block was also copy-pasted across five query builders.
+
+**Fix:** Extracted one `anyArrayFilter(column, arr, type, params)` helper that pushes the param and returns the `= ANY($n::type[])` predicate, gated on `if (!arr) return ""`. `getPlansForMonth`, `getPlansSummary`, `getExpendituresByCategory`, `getExpenditureSeries`, and `getTransactions` all call it — the dead `length >= 0` is gone and the empty-array "everything deselected → show nothing" behavior is preserved and documented on the helper. Generated SQL is byte-identical (the mocked `queries.test.ts` SQL/param assertions still pass).
+
 ### ✅ FIXED — `scripts/reset-local-db.mjs` has no host guard
 Drops `transactions`, `plans`, `categories`, `user`, `session`, `account`, `verification`, `_migrations` — all auth + app tables, cascaded. There is no check that `SQL_DB_HOST` is local; running this with prod env vars loaded would wipe RDS. Refuse unless host is `localhost`/`127.0.0.1`, or require an explicit `--yes-i-mean-it` flag.
 
