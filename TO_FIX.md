@@ -37,6 +37,9 @@ A new user lands on `/transactions` with zero categories. The desktop inline for
 ### `deleteTransaction` skips id validation and returns nothing
 `src/actions/transactions.ts:94-99` reads `id = Number(formData.get("id"))` and runs `DELETE … WHERE id = $1 AND user_id = $2` without checking `!Number.isFinite(id) || id <= 0`. Compare to `updateTransaction:75` which validates. Also returns implicit `void` while sibling actions return `ActionResult`. Today the form always sends a valid id, so it's latent — but inconsistent with the rest of the file.
 
+### Migration runner has no advisory lock — concurrent startup can race
+`src/instrumentation.ts:36-54` checks `_migrations`, then applies each pending file. If more than one container/task boots concurrently against the same database (rolling deploy or scaling to >1 task), two runners can both see a migration as not-done and race to apply it. Most statements are `IF NOT EXISTS`-safe, but `ALTER … ADD CONSTRAINT` (e.g. migration 006) and the `INSERT INTO _migrations (name)` PK are not — the loser's transaction rolls back and that task crashes at startup. Latent today because prod runs a single ephemeral task (see `DEPLOY.md`), but it becomes real the moment the deploy fans out. Fix: take a `pg_advisory_xact_lock(<const>)` (or session-level `pg_advisory_lock`) before the apply loop so runners serialize.
+
 ---
 
 ## Low / cosmetic
