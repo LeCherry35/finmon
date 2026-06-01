@@ -27,5 +27,8 @@ Migrations, seed scripts, env vars, date-column shapes → `src/db/CLAUDE.md` (a
 - **Filters**: shared `FilterPanel` + URL-param state across list pages — details in `src/lib/CLAUDE.md`.
 - **Charts**: server-fetched/pivoted data → client Recharts components — details in `src/components/charts/CLAUDE.md`.
 
+## Testing
+Vitest, co-located as `*.test.ts(x)`. `npm test` runs everything; `npm run test:cov` for coverage. Unit tests mock at the module boundary (`@/db`, `@/lib/dal`, `next/*`) — never hit the real DB, network, or auth. **Read `TESTS.md` before writing tests** — it documents the stack, mocking seams, fixtures, and gotchas (pinning the clock, the `server-only` stub, the mobile+desktop double-render). `TESTS_COVERAGE.md` tracks what's covered and what's still planned.
+
 ## Responsive design
 Mobile/desktop split is Tailwind v4's `md:` (≥768px) — the only breakpoint used. App-shell rules (nav, body padding, safe-area, page headers) live in `src/app/CLAUDE.md`; component-level rules (tables vs cards, mobile FAB+sheet, FilterPanel dropdown, chart container sizing) live in `src/components/CLAUDE.md`.

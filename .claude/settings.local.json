@@ -31,7 +31,32 @@
       "Bash(Select-Object -ExpandProperty FullName)",
       "Bash(dir)",
       "Bash(xargs grep -l \"TODO\\\\|FIXME\\\\|BUG\\\\|HACK\")",
-      "Bash(grep -v \"\\\\$[0-9]\")"
+      "Bash(grep -v \"\\\\$[0-9]\")",
+      "Bash(Get-ChildItem -Path \"C:\\\\beautyandprosperity\\\\Projects\\\\Dev\\\\finmon\" -Recurse -Directory -Include \"db\")",
+      "Bash(Select-Object -First 5)",
+      "Bash(Find C:\\\\beautyandprosperity\\\\Projects\\\\Dev\\\\finmon *)",
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__query-docs",
+      "Bash(npx --yes @better-auth/cli@latest generate --config src/lib/auth.ts --output src/db/migrations/004_auth_tables.sql --yes)",
+      "Bash(node *)",
+      "Bash(npx next *)",
+      "Bash(openssl rand *)",
+      "Bash(taskkill /F /IM node.exe)",
+      "Bash(taskkill /PID 22940 /F)",
+      "Bash(netstat -ano)",
+      "Bash(findstr \":3000\")",
+      "Bash(findstr LISTENING)",
+      "PowerShell(Stop-Process *)",
+      "Bash(git commit *)",
+      "Bash(git checkout *)",
+      "Bash(SQL_DB_NAME=finmon node --env-file=.env -e ' *)",
+      "Bash(git check-ignore *)",
+      "Bash(git add *)",
+      "Bash(npm --version)",
+      "Bash(npm view *)",
+      "Bash(npm config *)",
+      "Bash(npm test *)",
+      "Bash(npx vitest *)"
     ]
   }
 }
