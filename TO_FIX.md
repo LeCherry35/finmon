@@ -22,9 +22,6 @@ Audit findings, ordered by severity.
 
 ## Medium — UX / robustness
 
-### Expeditures over time chart allows to select month that are not adjacent.
-We need to handle only adjacent months selection.
-
 ### `requireUser` redirects to `/login` with no return-to
 `src/lib/dal.ts:14` does `redirect("/login?stale=1")` and the login page always pushes to `/transactions` afterward. Users trying to reach `/plan` or `/charts` get re-anchored to transactions. Pass a `?next=` param (validated against an allowlist of known routes before redirecting back).
 

@@ -1,5 +1,10 @@
 
 01.06.2026
+### ✅ FIXED — Expenditures-over-time chart allowed non-adjacent month selection
+The chart's x-axis is built from `generateBuckets(months, …)`, which only emits buckets for the selected months. A non-adjacent selection (e.g. Jan + Mar, Feb deselected) skipped Feb entirely, so the stacked-area "over time" chart stitched Jan straight to Mar and misrepresented the timeline.
+
+**Fix:** Added `contiguousMonthRange(months)` in `src/lib/charts.ts` — expands a selection to the full `[min..max]` span (inclusive, gap-filled, malformed entries ignored, year boundaries handled). `ExpendituresOverTimePanel` (`src/app/charts/page.tsx`) now derives `spanMonths` and uses it for `pickBucket`, `generateBuckets`, **and** `getExpenditureSeries`, so the axis is continuous and the filled-in months show real data. Scoped to the over-time chart only — `category-share` (a non-time aggregate) and the other list pages are untouched, and the FilterPanel selection is left as-is. Six new cases in `charts.test.ts`.
+
 ### ✅ FIXED — Logged-in users can't reach the password-reset form
 `src/proxy.ts` redirected any signed-in user away from `/reset-password` (it's in `AUTH_PATHS`). The forgot-password flow sends the user to `/reset-password?token=…`; if they still had a session cookie on the device they requested the reset from, the proxy bounced them to `/transactions` and they never saw the form.
 

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   bucketMonth,
   categoryColor,
+  contiguousMonthRange,
   formatBucketLabel,
   formatMonthLabelShort,
   generateBuckets,
@@ -90,6 +91,50 @@ describe("generateBuckets", () => {
     vi.setSystemTime(new Date("2026-06-15T12:00:00Z"));
     const buckets = generateBuckets(["2026-05", "2026-06"], "day");
     expect(buckets).toContain("2026-05-31"); // May not trimmed
+  });
+});
+
+describe("contiguousMonthRange", () => {
+  it("fills the gap between non-adjacent months", () => {
+    expect(contiguousMonthRange(["2026-01", "2026-03"])).toEqual([
+      "2026-01",
+      "2026-02",
+      "2026-03",
+    ]);
+  });
+
+  it("spans a year boundary", () => {
+    expect(contiguousMonthRange(["2025-11", "2026-02"])).toEqual([
+      "2025-11",
+      "2025-12",
+      "2026-01",
+      "2026-02",
+    ]);
+  });
+
+  it("is order-independent and dedupes", () => {
+    expect(contiguousMonthRange(["2026-03", "2026-01", "2026-03"])).toEqual([
+      "2026-01",
+      "2026-02",
+      "2026-03",
+    ]);
+  });
+
+  it("returns a single month unchanged", () => {
+    expect(contiguousMonthRange(["2026-06"])).toEqual(["2026-06"]);
+  });
+
+  it("ignores malformed entries and spans the valid ones", () => {
+    expect(contiguousMonthRange(["bad", "2026-01", "2026-03"])).toEqual([
+      "2026-01",
+      "2026-02",
+      "2026-03",
+    ]);
+  });
+
+  it("returns an empty array for no valid months", () => {
+    expect(contiguousMonthRange([])).toEqual([]);
+    expect(contiguousMonthRange(["bad", "also-bad"])).toEqual([]);
   });
 });
 

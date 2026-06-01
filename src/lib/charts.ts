@@ -41,6 +41,35 @@ function visibleDayCount(months: string[]): number {
   return count;
 }
 
+function monthIndex(month: string): number {
+  const [y, m] = month.split("-").map(Number);
+  return y * 12 + (m - 1);
+}
+
+function monthKeyFromIndex(idx: number): string {
+  const y = Math.floor(idx / 12);
+  const m = (idx % 12) + 1;
+  return `${y}-${String(m).padStart(2, "0")}`;
+}
+
+/**
+ * Expand a month selection to the contiguous span from its earliest to its
+ * latest entry, inclusive. The "expenditures over time" chart plots a single
+ * continuous timeline, so a non-adjacent selection (e.g. Jan + Mar) would
+ * otherwise stitch the gap shut and misrepresent the axis — filling it keeps
+ * every intervening month (Feb) on the axis. Malformed entries are ignored; an
+ * empty or all-malformed input yields `[]`.
+ */
+export function contiguousMonthRange(months: string[]): string[] {
+  const indices = months.filter((m) => MONTH_RE.test(m)).map(monthIndex);
+  if (indices.length === 0) return [];
+  const min = Math.min(...indices);
+  const max = Math.max(...indices);
+  const out: string[] = [];
+  for (let i = min; i <= max; i++) out.push(monthKeyFromIndex(i));
+  return out;
+}
+
 export function pickBucket(months: string[]): Bucket {
   const days = visibleDayCount(months);
   if (days <= 180) return "day";

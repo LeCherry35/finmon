@@ -17,7 +17,7 @@ import {
 import ExpendituresOverTime from "@/components/charts/ExpendituresOverTime";
 import CategoryShare from "@/components/charts/CategoryShare";
 import { parseFilters, resolveFilters } from "@/lib/filters";
-import { generateBuckets, pickBucket } from "@/lib/charts";
+import { contiguousMonthRange, generateBuckets, pickBucket } from "@/lib/charts";
 import {
   monthTransitionBuckets,
   pivotForRecharts,
@@ -96,13 +96,17 @@ async function ExpendituresOverTimePanel({
   categoryIds: number[] | null;
   orderedCategories: Awaited<ReturnType<typeof getCategories>>;
 }) {
-  const bucket = pickBucket(months);
-  const buckets = generateBuckets(months, bucket);
+  // Plot a continuous timeline: a non-adjacent month selection (e.g. Jan + Mar)
+  // is filled in to its full span (Jan–Mar) so the x-axis doesn't stitch the
+  // gap shut. The query reads the same span so intervening months show real data.
+  const spanMonths = contiguousMonthRange(months);
+  const bucket = pickBucket(spanMonths);
+  const buckets = generateBuckets(spanMonths, bucket);
 
   const rows =
     orderedCategories.length === 0
       ? []
-      : await getExpenditureSeries(userId, months, categoryIds, bucket);
+      : await getExpenditureSeries(userId, spanMonths, categoryIds, bucket);
 
   const data = pivotForRecharts(buckets, orderedCategories, rows);
   const monthBoundaries = monthTransitionBuckets(buckets);
