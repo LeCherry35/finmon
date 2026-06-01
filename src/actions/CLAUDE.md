@@ -23,4 +23,4 @@ All DB writes live here. Each file is `"use server"` at the top, reads `FormData
 
 ### Categories are created on-the-fly from transactions
 
-`createTransaction` accepts `category_name` (not `category_id`) and runs `INSERT … ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id` to either create or look up the category in a single round-trip. `updateTransaction` takes a `category_id` directly because the edit UI is a select against existing categories.
+`createTransaction` accepts `category_name` (not `category_id`) and runs `INSERT … ON CONFLICT (user_id, name) DO UPDATE SET name = EXCLUDED.name RETURNING id` to either create or look up the category in a single round-trip. (The conflict target is `(user_id, name)` — the per-user unique constraint added in migration 006, not the original global `name` unique.) `updateTransaction` takes a `category_id` directly because the edit UI is a select against existing categories.
