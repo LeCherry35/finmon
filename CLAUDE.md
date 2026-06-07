@@ -5,7 +5,8 @@ Personal finance tracker. Each user signs in and gets their own isolated data �
 
 Entities:
 - **Category** — name + priority (0–10). Used to classify transactions and to set monthly plans against.
-- **Transaction** — `amount`, `type` (`income` | `spend`), `category_id`, `date` (`YYYY-MM-DD`), optional `note`.
+- **Transaction** — `amount`, `type` (`income` | `spend`), `category_id`, `date` (`YYYY-MM-DD`), optional `note`. Made up of one or more **Products**.
+- **Product** — a line item on a transaction: `name` (only mandatory), optional `brand`, `cost`, `product_type`, `tags` (`TEXT[]`), `description`. Cost lives on the line item (not a shared catalog), so the same type/brand can recur at different costs. `transaction.amount` stays authoritative — products are an optional breakdown, not forced to sum to it; a transaction created without products gets one default product named `other` (cost = amount).
 - **Plan** — `(category_id, month)` budget; one amount per category per `YYYY-MM`. Upsert on conflict.
 
 Pages: `/transactions` (default landing — list/CRUD), `/categories` (CRUD), `/plan` (current month: planned vs spent vs left, per category), `/expenditures` (spend totals by category, all-time), `/charts` (visualizations — currently a stacked-area expenditures-over-time chart, switchable via tabs as more chart types are added).

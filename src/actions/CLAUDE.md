@@ -24,3 +24,7 @@ All DB writes live here. Each file is `"use server"` at the top, reads `FormData
 ### Categories are created on-the-fly from transactions
 
 `createTransaction` accepts `category_name` (not `category_id`) and runs `INSERT … ON CONFLICT (user_id, name) DO UPDATE SET name = EXCLUDED.name RETURNING id` to either create or look up the category in a single round-trip. (The conflict target is `(user_id, name)` — the per-user unique constraint added in migration 006, not the original global `name` unique.) `updateTransaction` takes a `category_id` directly because the edit UI is a select against existing categories.
+
+### Transactions carry products
+
+Every transaction is made up of `products` line items (`src/actions/products.ts`). `createTransaction` inserts the transaction and a single default product named `'other'` (cost = amount) **atomically via a pooled client** (`pool.connect()` + `BEGIN`/`COMMIT`) — not two bare `pool.query` calls — so a transaction is never left without its default product. `transactions.amount` stays authoritative; product costs are an optional breakdown and aren't forced to sum to it. `addProduct`/`updateProduct`/`deleteProduct` return `ActionResult`; `addProduct` validates transaction ownership via `userOwnsTransaction` (mirrors `userOwnsCategory`). Only `name` is required; `cost` is optional but must be positive when present; `tags` come in as one comma-separated field and are split/trimmed into a `TEXT[]`.

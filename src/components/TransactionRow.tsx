@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { updateTransaction, deleteTransaction } from "@/actions/transactions";
 import type { Transaction } from "@/actions/transactions";
 import type { Category } from "@/actions/categories";
+import ProductsModal from "@/components/ProductsModal";
 
 const MOBILE_DATE_FMT = new Intl.DateTimeFormat("en-US", {
   month: "short",
@@ -25,6 +26,8 @@ export default function TransactionRow({
 }) {
   const [editing, setEditing] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [showProducts, setShowProducts] = useState(false);
+  const productCount = tx.products?.length ?? 0;
   const [amount, setAmount] = useState(String(tx.amount));
   const [type, setType] = useState(tx.type);
   const [categoryId, setCategoryId] = useState(String(tx.category_id));
@@ -104,6 +107,8 @@ export default function TransactionRow({
             setEditing={setEditing}
             expanded={expanded}
             setExpanded={setExpanded}
+            onProducts={() => setShowProducts(true)}
+            productCount={productCount}
             amount={amount}
             setAmount={setAmount}
             type={type}
@@ -214,6 +219,13 @@ export default function TransactionRow({
           <td className="py-2">
             <div className="flex gap-2 justify-end">
               <button
+                onClick={() => setShowProducts(true)}
+                title={`Products (${productCount})`}
+                className="text-zinc-400 hover:text-zinc-700"
+              >
+                <BoxIcon />
+              </button>
+              <button
                 onClick={() => setEditing(true)}
                 title="Edit"
                 className="text-zinc-400 hover:text-zinc-700"
@@ -236,6 +248,10 @@ export default function TransactionRow({
           </td>
         </tr>
       )}
+
+      {showProducts && (
+        <ProductsModal tx={tx} onClose={() => setShowProducts(false)} />
+      )}
     </>
   );
 }
@@ -247,6 +263,8 @@ function MobileCard({
   setEditing,
   expanded,
   setExpanded,
+  onProducts,
+  productCount,
   amount,
   setAmount,
   type,
@@ -272,6 +290,8 @@ function MobileCard({
   setEditing: (v: boolean) => void;
   expanded: boolean;
   setExpanded: (v: boolean) => void;
+  onProducts: () => void;
+  productCount: number;
   amount: string;
   setAmount: (v: string) => void;
   type: Transaction["type"];
@@ -380,6 +400,13 @@ function MobileCard({
             <span className="text-zinc-400">Note: </span>
             {tx.note ?? "—"}
           </div>
+          <button
+            onClick={onProducts}
+            className="w-full min-h-11 rounded border border-zinc-300 text-sm text-zinc-700 flex items-center justify-center gap-2"
+          >
+            <BoxIcon />
+            Products ({productCount})
+          </button>
           <div className="flex gap-2">
             <button
               onClick={() => setEditing(true)}
@@ -412,6 +439,16 @@ function PencilIcon() {
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
       <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+    </svg>
+  );
+}
+
+function BoxIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+      <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+      <line x1="12" y1="22.08" x2="12" y2="12" />
     </svg>
   );
 }

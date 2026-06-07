@@ -1,12 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { formData, TEST_USER_ID } from "../../test/helpers";
 
-const { query, revalidatePath } = vi.hoisted(() => ({
+// `query` backs both pool.query and the pooled client's query, so call order
+// across pool + client is a single sequence on this one mock.
+const { query, release, revalidatePath } = vi.hoisted(() => ({
   query: vi.fn(),
+  release: vi.fn(),
   revalidatePath: vi.fn(),
 }));
 
-vi.mock("@/db", () => ({ pool: { query } }));
+vi.mock("@/db", () => ({
+  pool: { query, connect: vi.fn(async () => ({ query, release })) },
+}));
 vi.mock("@/lib/dal", () => ({
   requireUser: vi.fn(async () => ({ id: "user-1" })),
 }));
@@ -20,6 +25,7 @@ import {
 
 beforeEach(() => {
   query.mockReset();
+  release.mockReset();
   revalidatePath.mockReset();
 });
 afterEach(() => vi.clearAllMocks());
@@ -40,10 +46,13 @@ describe("createTransaction", () => {
     expect(query).not.toHaveBeenCalled();
   });
 
-  it("upserts the category, inserts the row, and revalidates on success", async () => {
+  it("upserts the category, inserts the row + default product, and revalidates on success", async () => {
     query
-      .mockResolvedValueOnce({ rows: [{ id: 7 }] }) // category upsert
-      .mockResolvedValueOnce({}); // transaction insert
+      .mockResolvedValueOnce({ rows: [{ id: 7 }] }) // category upsert (pool)
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ id: 42 }] }) // transaction insert RETURNING id
+      .mockResolvedValueOnce({}) // product insert
+      .mockResolvedValueOnce({}); // COMMIT
 
     const result = await createTransaction(
       prev,
@@ -57,11 +66,12 @@ describe("createTransaction", () => {
     );
 
     expect(result).toEqual({ successCount: 3 });
-    expect(query).toHaveBeenCalledTimes(2);
+    // exactly: category upsert + BEGIN + transaction INSERT + product INSERT + COMMIT
+    expect(query).toHaveBeenCalledTimes(5);
     // category upsert: trimmed name + user id
     expect(query.mock.calls[0][1]).toEqual(["Food", TEST_USER_ID]);
-    // insert: amount, type, category_id, date, note, user id
-    expect(query.mock.calls[1][1]).toEqual([
+    // transaction insert: amount, type, category_id, date, note, user id
+    expect(query.mock.calls[2][1]).toEqual([
       12.5,
       "spend",
       7,
@@ -69,17 +79,29 @@ describe("createTransaction", () => {
       "lunch",
       TEST_USER_ID,
     ]);
+    // default product 'other' mirrors the amount, scoped to the new transaction
+    const [productSql, productParams] = query.mock.calls[3];
+    expect(productSql).toMatch(/INSERT INTO products/);
+    expect(productSql).toMatch(/'other'/);
+    expect(productParams).toEqual([42, TEST_USER_ID, 12.5]);
+    expect(release).toHaveBeenCalled();
     expect(revalidatePath).toHaveBeenCalledWith("/transactions");
     expect(revalidatePath).toHaveBeenCalledWith("/categories");
   });
 
   it("stores an empty note as null", async () => {
-    query.mockResolvedValueOnce({ rows: [{ id: 1 }] }).mockResolvedValueOnce({});
+    query
+      .mockResolvedValueOnce({ rows: [{ id: 1 }] }) // category upsert
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ id: 5 }] }) // transaction insert
+      .mockResolvedValueOnce({}) // product insert
+      .mockResolvedValueOnce({}); // COMMIT
     await createTransaction(
       prev,
       formData({ amount: "5", type: "income", category_name: "Pay", date: "2026-06-01" }),
     );
-    expect(query.mock.calls[1][1][4]).toBeNull();
+    // transaction insert is the 3rd query call; note is param index 4
+    expect(query.mock.calls[2][1][4]).toBeNull();
   });
 });
 

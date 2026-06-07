@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { pool } from "@/db";
 import { userOwnsCategory } from "@/db/queries";
 import { requireUser } from "@/lib/dal";
+import type { Product } from "@/actions/products";
 
 export type Transaction = {
   id: number;
@@ -13,6 +14,7 @@ export type Transaction = {
   date: string;
   note: string | null;
   category_name?: string;
+  products?: Product[];
 };
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -52,10 +54,28 @@ export async function createTransaction(
   );
   const category_id = rows[0].id;
 
-  await pool.query(
-    "INSERT INTO transactions (amount, type, category_id, date, note, user_id) VALUES ($1, $2, $3, $4, $5, $6)",
-    [amount, type, category_id, date, note, userId]
-  );
+  // Insert the transaction and its default 'other' product atomically: every
+  // transaction is made up of products, and one unspecified at creation gets a
+  // single product mirroring the full amount (transactions.amount stays the
+  // source of truth — products are an optional breakdown the user can refine).
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows: txRows } = await client.query<{ id: number }>(
+      "INSERT INTO transactions (amount, type, category_id, date, note, user_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+      [amount, type, category_id, date, note, userId]
+    );
+    await client.query(
+      "INSERT INTO products (transaction_id, user_id, name, cost) VALUES ($1, $2, 'other', $3)",
+      [txRows[0].id, userId, amount]
+    );
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
 
   revalidatePath("/transactions");
   revalidatePath("/categories");

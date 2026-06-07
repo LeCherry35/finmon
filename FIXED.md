@@ -1,4 +1,20 @@
 
+07.06.2026
+### ✅ FIXED — Product edit form showed stale values when re-opened after a save
+`src/components/ProductsModal.tsx` `ProductItem` initialized `form` once via `useState(() => toForm(product))`. After a save + `revalidatePath`, the fresh `product` prop updated the read-only view but `form` was never re-synced, so re-opening Edit showed the pre-save text (e.g. a value the server had trimmed).
+
+**Fix:** The Edit button's `onClick` now calls `setForm(toForm(product))` before `setEditing(true)`, so the form is re-seeded from the current prop on every edit. Covered by the existing `ProductsModal.test.tsx` suite.
+
+### ✅ FIXED — `getProductsForTransaction` was dead code
+`src/db/queries.ts` exported `getProductsForTransaction`, but nothing called it — `getTransactions` attaches products inline via a batched `transaction_id = ANY(...)` query. The orphan invited a future per-row caller to reintroduce N+1.
+
+**Fix:** Removed the unused function. The `Product` type import stays (still used by `getTransactions`'s attach). No callers existed, so no other change was needed.
+
+### ✅ FIXED — `createTransaction` test dropped its exact call-count assertion
+`src/actions/transactions.test.ts` no longer asserted the total number of `query` calls (the pre-rewrite test pinned `toHaveBeenCalledTimes(2)`); it only checked specific call indices, so a dropped `BEGIN`/default-product `INSERT` or a spurious query could pass unnoticed.
+
+**Fix:** Re-added `expect(query).toHaveBeenCalledTimes(5)` to the success path (category upsert + BEGIN + transaction INSERT + product INSERT + COMMIT).
+
 01.06.2026
 ### ✅ FIXED — Expenditures-over-time chart allowed non-adjacent month selection
 The chart's x-axis is built from `generateBuckets(months, …)`, which only emits buckets for the selected months. A non-adjacent selection (e.g. Jan + Mar, Feb deselected) skipped Feb entirely, so the stacked-area "over time" chart stitched Jan straight to Mar and misrepresented the timeline.

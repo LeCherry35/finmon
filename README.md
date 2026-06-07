@@ -1,8 +1,8 @@
 # finmon
 
 A personal finance tracker. Each user signs in and gets their own isolated data —
-logs income/spend, groups transactions by category, and compares actual spend
-against monthly plans.
+logs income/spend, groups transactions by category, breaks each transaction into
+product line items, and compares actual spend against monthly plans.
 
 **Pages:** `/transactions` (default landing — list/CRUD), `/categories` (CRUD),
 `/plan` (current month: planned vs spent vs left), `/expenditures` (spend totals

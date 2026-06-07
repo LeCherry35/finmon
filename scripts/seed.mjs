@@ -139,6 +139,20 @@ async function bulkInsert(client, table, columns, rows) {
   );
 }
 
+// Give every owner transaction lacking products a default 'other' product whose
+// cost mirrors the amount — mirrors migration 007's backfill and createTransaction's
+// default, so seeded data matches what the app produces. Idempotent via NOT EXISTS.
+async function backfillOtherProducts(db, ownerUserId) {
+  await db.query(
+    `INSERT INTO products (transaction_id, user_id, name, cost)
+     SELECT t.id, t.user_id, 'other', t.amount
+     FROM transactions t
+     WHERE t.user_id = $1
+       AND NOT EXISTS (SELECT 1 FROM products p WHERE p.transaction_id = t.id)`,
+    [ownerUserId]
+  );
+}
+
 async function runInit(pool) {
   const ownerUserId = process.env.OWNER_USER_ID;
   if (!ownerUserId) {
@@ -200,6 +214,7 @@ async function runInit(pool) {
       transactions
     );
     await bulkInsert(client, "plans", ["category_id", "month", "amount", "user_id"], planRows);
+    await backfillOtherProducts(client, ownerUserId);
 
     await client.query("COMMIT");
     console.log(
@@ -263,6 +278,7 @@ async function runMonth(pool, monthArg) {
     ["amount", "type", "category_id", "date", "note", "user_id"],
     transactions
   );
+  await backfillOtherProducts(pool, ownerUserId);
 
   const mm = String(n).padStart(2, "0");
   console.log(

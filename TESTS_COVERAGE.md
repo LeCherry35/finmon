@@ -3,7 +3,7 @@
 What finmon's tests cover today, and what's still planned. For *how* the tests
 work — stack, mocking seams, fixtures, gotchas — see [`TESTS.md`](./TESTS.md).
 
-**Where we are:** **152 tests + 1 `todo`** across 18 files, all green. Every
+**Where we are:** **183 tests + 1 `todo`** across 20 files, all green. Every
 layer below the UI is unit-tested; the gaps left are a real-Postgres tier, full
 end-to-end flows, and the CI gate.
 
@@ -20,10 +20,10 @@ components.
 | Layer | Files | What the tests pin |
 |-------|-------|--------------------|
 | ✅ Pure logic | `src/lib/{filters,charts,chartData,email}.test.ts`, `src/components/charts/registry.test.ts` | Filter parsing & URL round-trips, chart bucketing / date math (clock pinned), Recharts pivot, email templating & HTML-escaping, chart/nav registry integrity |
-| ✅ Server actions | `src/actions/{transactions,categories,plans,auth}.test.ts` | The `FormData` → validate → `pool.query` → `revalidatePath` contract: every validation-rejection branch, the success path, unique-violation handling, and `user_id` tenancy on every write |
-| ✅ DB queries (mocked) | `src/db/queries.test.ts` | Generated SQL + param array for each branch (category/month clauses, day-vs-month bucket, empty-month short-circuit) and a sweep asserting every query is scoped by `user_id = $1` |
+| ✅ Server actions | `src/actions/{transactions,categories,plans,products,auth}.test.ts` | The `FormData` → validate → `pool.query` → `revalidatePath` contract: every validation-rejection branch, the success path, unique-violation handling, and `user_id` tenancy on every write. `transactions` also pins the create-time client transaction (tx + default `other` product); `products` pins add/update/delete incl. tag parsing and transaction-ownership checks |
+| ✅ DB queries (mocked) | `src/db/queries.test.ts` | Generated SQL + param array for each branch (category/month clauses, day-vs-month bucket, empty-month short-circuit), the `getTransactions` products-attach round-trip, and a sweep asserting every query is scoped by `user_id = $1` |
 | ✅ Middleware & auth gate | `src/proxy.test.ts`, `src/lib/dal.test.ts` | Every redirect branch of the route guard (protected/auth pages, `?stale` cookie clearing) and `requireUser` / `getCurrentUser` |
-| ✅ Components | `src/components/{CategoryRow,PlanRow,TransactionRow,TransactionCreateSheet,FilterPanel}.test.tsx`, `charts/ChartTabs.test.tsx` | Edit/save/cancel state, two-click delete confirm, sheet open/auto-close on success, error display, and filter/tab toggles producing the right URL params |
+| ✅ Components | `src/components/{CategoryRow,PlanRow,TransactionRow,TransactionCreateSheet,FilterPanel,ProductsModal}.test.tsx`, `charts/ChartTabs.test.tsx` | Edit/save/cancel state, two-click delete confirm, sheet open/auto-close on success, error display, filter/tab toggles producing the right URL params, and the products modal (render/add/delete, total-mismatch hint, mock upload, close) |
 
 These run with no infrastructure — `npm test` is enough.
 

@@ -1,6 +1,7 @@
 import { pool } from "@/db";
 import type { Category } from "@/actions/categories";
 import type { Transaction } from "@/actions/transactions";
+import type { Product } from "@/actions/products";
 import type { Bucket } from "@/lib/charts";
 
 export type ExpenditureByCategory = {
@@ -58,6 +59,19 @@ export async function userOwnsCategory(
   const { rowCount } = await pool.query(
     "SELECT 1 FROM categories WHERE id = $1 AND user_id = $2",
     [categoryId, userId],
+  );
+  return (rowCount ?? 0) > 0;
+}
+
+/** Whether `transactionId` exists and belongs to `userId`. Used by product
+ *  writes to reject cross-tenant or stale transaction references. */
+export async function userOwnsTransaction(
+  userId: string,
+  transactionId: number,
+): Promise<boolean> {
+  const { rowCount } = await pool.query(
+    "SELECT 1 FROM transactions WHERE id = $1 AND user_id = $2",
+    [transactionId, userId],
   );
   return (rowCount ?? 0) > 0;
 }
@@ -226,5 +240,20 @@ export async function getTransactions(
      ORDER BY t.date DESC, t.id DESC`,
     params,
   );
+
+  // Attach each transaction's product line items in one extra round-trip,
+  // grouped in JS by transaction_id (rows already come back oldest-first per tx).
+  if (rows.length === 0) return rows;
+  const { rows: products } = await pool.query<Product>(
+    "SELECT * FROM products WHERE user_id = $1 AND transaction_id = ANY($2::int[]) ORDER BY transaction_id, id ASC",
+    [userId, rows.map((t) => t.id)],
+  );
+  const byTx = new Map<number, Product[]>();
+  for (const p of products) {
+    const list = byTx.get(p.transaction_id);
+    if (list) list.push(p);
+    else byTx.set(p.transaction_id, [p]);
+  }
+  for (const t of rows) t.products = byTx.get(t.id) ?? [];
   return rows;
 }

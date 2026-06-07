@@ -137,8 +137,30 @@ describe("getTransactions", () => {
 
   it("appends month and category filters", async () => {
     await getTransactions(USER, { months: ["2026-06"], categoryIds: [3] });
-    const { params } = lastCall();
+    // The category/month clause params are on the first (transactions) query;
+    // with the default empty-rows mock no products round-trip is made.
+    const [, params] = query.mock.calls[0];
     expect(params).toEqual([USER, ["2026-06"], [3]]);
+  });
+
+  it("attaches each transaction's products in a second user-scoped query", async () => {
+    query
+      .mockResolvedValueOnce({ rows: [{ id: 1 }, { id: 2 }] }) // transactions
+      .mockResolvedValueOnce({
+        rows: [
+          { id: 10, transaction_id: 1, name: "other" },
+          { id: 11, transaction_id: 1, name: "milk" },
+          { id: 12, transaction_id: 2, name: "other" },
+        ],
+      }); // products
+
+    const txs = await getTransactions(USER);
+
+    const { sql, params } = lastCall();
+    expect(sql).toMatch(/FROM products WHERE user_id = \$1 AND transaction_id = ANY\(\$2::int\[\]\)/);
+    expect(params).toEqual([USER, [1, 2]]);
+    expect(txs[0].products?.map((p) => p.name)).toEqual(["other", "milk"]);
+    expect(txs[1].products?.map((p) => p.name)).toEqual(["other"]);
   });
 });
 
