@@ -1,0 +1,104 @@
+[
+  {
+    "output": {
+      "store": "АТБ",
+      "total": 6.85,
+      "products": [
+        {
+          "name": "Банани Коста Рика",
+          "brand": null,
+          "cost": 1.38,
+          "product_type": "bananas",
+          "tags": ["fruit", "banana", "fresh", "produce"],
+          "price": 1.15,
+          "amount": 1.2,
+          "unit": "kg"
+        },
+        {
+          "name": "Сир Чеддер Cathedral City",
+          "brand": "Cathedral City",
+          "cost": 5.47,
+          "product_type": "cheese",
+          "tags": ["dairy", "cheese", "hard cheese", "cheddar"],
+          "price": null,
+          "amount": null,
+          "unit": null
+        }
+      ]
+    }
+  },
+  {
+    "output": {
+      "store": "A24",
+      "total": 8.99,
+      "products": [
+        {
+          "name": "Ibuprofen 200mg",
+          "brand": null,
+          "cost": 8.99,
+          "product_type": "medicine",
+          "tags": ["pharmacy", "painkiller", "medicine", "ibuprofen", "otc"],
+          "price": null,
+          "amount": 1,
+          "unit": "pcs"
+        }
+      ]
+    }
+  },
+  {
+    "output": {
+      "store": "Sainsbury's 300g",
+      "total": 9.3,
+      "products": [
+        {
+          "name": "Greek Yogurt 5%",
+          "brand": "Fage Total",
+          "cost": 4.5,
+          "product_type": "yogurt",
+          "tags": ["dairy", "yogurt", "greek yogurt", "high protein"],
+          "price": 2.25,
+          "amount": 2,
+          "unit": "pcs"
+        },
+        {
+          "name": "Cherry Tomatoes",
+          "brand": "Taste the Difference",
+          "cost": 4.8,
+          "product_type": "cherry tomatoes",
+          "tags": ["vegetable", "tomato", "cherry tomato", "fresh", "produce"],
+          "price": 8.0,
+          "amount": 0.6,
+          "unit": "kg"
+        }
+      ]
+    }
+  },
+  {
+    "output": {
+      "store": "Сільпо",
+      "total": 75.4,
+      "products": [
+        {
+          "name": "Молоко Яготинське 2.6 1л",
+          "brand": "Яготинське",
+          "cost": 39.98,
+          "product_type": "milk",
+          "tags": ["dairy", "milk", "lactose"],
+          "price": 19.99,
+          "amount": 2,
+          "unit": "pcs"
+        },
+        {
+          "name": "Банани",
+          "brand": "Bonita",
+          "cost": 35.42,
+          "product_type": "banana",
+          "tags": ["fruit", "banana", "fresh", "produce"],
+          "price": 36.9,
+          "amount": 0.96,
+          "unit": "kg"
+        }
+      ]
+    }
+  }
+]

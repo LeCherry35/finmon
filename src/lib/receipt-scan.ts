@@ -1,6 +1,10 @@
 import "server-only";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { z } from "zod";
 import type { ProductFields } from "@/actions/products";
+import rawExamples from "@/lib/receipt-examples.json";
+import rawUnits from "@/lib/receipt-units.json";
 
 /** Result of scanning a receipt image: the parsed line items mapped straight to
  *  product fields, plus the store/total the model read off the receipt (used for
@@ -17,20 +21,54 @@ const DEFAULT_MODEL = "gpt-4o-mini";
  *  the caller's `finally`, leaving the transaction stuck on `processing`. */
 const REQUEST_TIMEOUT_MS = 60_000;
 
-const SYSTEM_PROMPT = `You are a receipt parser. You are given a photo of a store \
-receipt and must extract its line items as structured data. Rules:
-- One object per purchased line item. Skip subtotals, totals, tax, discounts, \
-loyalty messages, and store metadata — those are not products.
-- "name" is the item name as printed (cleaned up, title case if it's all-caps).
-- "cost" is the total price paid for that line (price x quantity), as a positive \
-number with no currency symbol.
-- "amount" is the quantity and "unit" its unit (e.g. 2 / "kg", 1 / "pcs") only \
-when the receipt shows them; otherwise null.
-- "price" is the per-unit price only when shown separately; otherwise null.
-- "brand", "product_type", "description" only when evident; otherwise null.
-- "tags" is a short list of lowercase keywords (e.g. ["dairy"]); [] if unsure.
-- "store" is the merchant name and "total" the receipt grand total, or null.
-- Use null for anything you cannot read confidently. Do not invent values.`;
+/** A few-shot example, authored in `receipt-examples.json`. `note` is a
+ *  maintainer-only annotation describing the receipt — it is added manually and
+ *  is NEVER sent to the model (not part of the output schema, not rendered into
+ *  the prompt). `output` is the exact JSON the model should produce. */
+type ReceiptExample = { note?: string; output: unknown };
+
+/** The prompt is composed at runtime from the human-edited rules in
+ *  `receipt-prompt.md` (placeholders `{{UNITS}}` and `{{EXAMPLES}}` mark where the
+ *  allowed-unit list and few-shot block go) plus the config in
+ *  `receipt-units.json` and `receipt-examples.json`. Keeping them out of the
+ *  source lets the prompt, its units and its examples be tuned without touching
+ *  code. The `.md` is read from disk, so it's traced into the standalone build via
+ *  `outputFileTracingIncludes` in `next.config.ts`; the JSON is bundled by the
+ *  imports above. */
+const PROMPT_TEMPLATE_PATH = path.join(process.cwd(), "src", "lib", "receipt-prompt.md");
+const EXAMPLES = rawExamples as ReceiptExample[];
+const UNITS = rawUnits as string[];
+
+/** Render the examples as a block of pretty-printed JSON outputs. `note` is
+ *  intentionally not rendered — the model only ever sees the output JSON it
+ *  should reproduce. */
+function renderExamples(examples: ReceiptExample[]): string {
+  if (examples.length === 0) return "";
+  const blocks = examples.map(
+    (ex, i) => `Example ${i + 1}:\n${JSON.stringify(ex.output, null, 2)}`,
+  );
+  return `Examples (each shows the exact JSON to produce for a receipt):\n\n${blocks.join(
+    "\n\n",
+  )}`;
+}
+
+/** Compose + cache the system prompt. Read once on first use, not at import, so a
+ *  missing file surfaces as a scan-time error rather than a module-load crash. */
+let cachedSystemPrompt: string | null = null;
+function getSystemPrompt(): string {
+  if (cachedSystemPrompt === null) {
+    const template = readFileSync(PROMPT_TEMPLATE_PATH, "utf8");
+    const units = UNITS.map((u) => `"${u}"`).join(", ");
+    const examples = renderExamples(EXAMPLES);
+    const withUnits = template.replace("{{UNITS}}", units);
+    cachedSystemPrompt = (
+      withUnits.includes("{{EXAMPLES}}")
+        ? withUnits.replace("{{EXAMPLES}}", examples)
+        : `${withUnits.trimEnd()}\n\n${examples}`
+    ).trim();
+  }
+  return cachedSystemPrompt;
+}
 
 /** Strict structured-output schema. OpenAI strict mode requires every property to
  *  be listed in `required` and optionality expressed as nullable types. */
@@ -51,7 +89,6 @@ const RESPONSE_SCHEMA = {
           cost: { type: ["number", "null"] },
           product_type: { type: ["string", "null"] },
           tags: { type: "array", items: { type: "string" } },
-          description: { type: ["string", "null"] },
           price: { type: ["number", "null"] },
           amount: { type: ["number", "null"] },
           unit: { type: ["string", "null"] },
@@ -62,7 +99,6 @@ const RESPONSE_SCHEMA = {
           "cost",
           "product_type",
           "tags",
-          "description",
           "price",
           "amount",
           "unit",
@@ -81,7 +117,6 @@ const ProductSchema = z.object({
   cost: z.number().nullable().optional(),
   product_type: z.string().nullable().optional(),
   tags: z.array(z.string()).nullable().optional(),
-  description: z.string().nullable().optional(),
   price: z.number().nullable().optional(),
   amount: z.number().nullable().optional(),
   unit: z.string().nullable().optional(),
@@ -130,7 +165,7 @@ export async function scanReceipt(imageDataUrl: string): Promise<ScanResult> {
       body: JSON.stringify({
         model,
         messages: [
-          { role: "system", content: SYSTEM_PROMPT },
+          { role: "system", content: getSystemPrompt() },
           {
             role: "user",
             content: [
@@ -183,7 +218,8 @@ export async function scanReceipt(imageDataUrl: string): Promise<ScanResult> {
       cost: positiveOrNull(p.cost),
       product_type: trimOrNull(p.product_type),
       tags: (p.tags ?? []).map((t) => t.trim()).filter((t) => t.length > 0),
-      description: trimOrNull(p.description),
+      // `description` is never AI-populated — it's typed in manually later.
+      description: null,
       price: positiveOrNull(p.price),
       amount: positiveOrNull(p.amount),
       unit: trimOrNull(p.unit),

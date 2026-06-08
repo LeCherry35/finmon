@@ -119,6 +119,18 @@ describe("scanReceipt", () => {
     ]);
   });
 
+  it("never carries the model's description through (it's a manual-only field)", async () => {
+    fetchMock.mockResolvedValueOnce(
+      openaiResponse({
+        store: "Tesco",
+        total: null,
+        products: [{ name: "Milk", description: "model invented this", tags: [] }],
+      }),
+    );
+    const result = await scanReceipt("data:image/jpeg;base64,AAAA");
+    expect(result.products[0].description).toBeNull();
+  });
+
   it("uses OPENAI_MODEL when set", async () => {
     vi.stubEnv("OPENAI_MODEL", "gpt-4o");
     fetchMock.mockResolvedValueOnce(openaiResponse({ store: null, total: null, products: [] }));
@@ -167,5 +179,87 @@ describe("scanReceipt", () => {
       openaiResponse({ store: null, total: null, products: "nope" }),
     );
     await expect(scanReceipt("data:image/jpeg;base64,AAAA")).rejects.toThrow();
+  });
+});
+
+describe("scanReceipt system prompt", () => {
+  /** Run a no-op scan and return the composed system message the call sent. */
+  async function systemPromptFromScan() {
+    fetchMock.mockResolvedValueOnce(openaiResponse({ store: null, total: null, products: [] }));
+    await scanReceipt("data:image/jpeg;base64,AAAA");
+    const body = JSON.parse(fetchMock.mock.calls.at(-1)[1].body);
+    return body.messages[0].content as string;
+  }
+
+  it("composes the prompt from the template, the unit list, and the examples", async () => {
+    const prompt = await systemPromptFromScan();
+
+    // Placeholders are substituted, not left in the rendered prompt.
+    expect(prompt).not.toContain("{{UNITS}}");
+    expect(prompt).not.toContain("{{EXAMPLES}}");
+    // Units from receipt-units.json are injected as a quoted list.
+    expect(prompt).toContain('"kg"');
+    expect(prompt).toContain('"dozen"');
+    // Few-shot block from receipt-examples.json is rendered as numbered JSON outputs.
+    expect(prompt).toContain("Examples (each shows the exact JSON to produce for a receipt):");
+    expect(prompt).toContain("Example 1:");
+    expect(prompt).toContain("Example 4:"); // four examples in the fixture
+    expect(prompt).toContain('"АТБ"'); // store from the first example's output
+    // Trimmed, non-empty.
+    expect(prompt.length).toBeGreaterThan(0);
+    expect(prompt).toBe(prompt.trim());
+  });
+
+  it("does not leak an example's maintainer-only `note` into the prompt", async () => {
+    // renderExamples only serializes `output`, never `note`. Guard against a
+    // regression that pretty-prints the whole example object.
+    const prompt = await systemPromptFromScan();
+    expect(prompt).not.toContain('"note"');
+  });
+
+  it("reads the template once and caches the composed prompt", async () => {
+    vi.resetModules();
+    const realFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+    const readSpy = vi.fn(realFs.readFileSync);
+    vi.doMock("node:fs", () => ({ ...realFs, default: realFs, readFileSync: readSpy }));
+    try {
+      const { scanReceipt: freshScan } = await import("@/lib/receipt-scan");
+      fetchMock.mockResolvedValue(openaiResponse({ store: null, total: null, products: [] }));
+      await freshScan("data:image/jpeg;base64,AAAA");
+      await freshScan("data:image/jpeg;base64,BBBB");
+      const templateReads = readSpy.mock.calls.filter((c) =>
+        String(c[0]).includes("receipt-prompt.md"),
+      );
+      expect(templateReads).toHaveLength(1); // composed once, reused on the 2nd scan
+    } finally {
+      vi.doUnmock("node:fs");
+      vi.resetModules();
+    }
+  });
+
+  it("surfaces a missing prompt template at scan time, not on import", async () => {
+    vi.resetModules();
+    const realFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+    vi.doMock("node:fs", () => ({
+      ...realFs,
+      default: realFs,
+      readFileSync: (p: Parameters<typeof realFs.readFileSync>[0], ...rest: unknown[]) => {
+        if (String(p).includes("receipt-prompt.md")) {
+          throw Object.assign(new Error("ENOENT: prompt template missing"), { code: "ENOENT" });
+        }
+        // @ts-expect-error pass-through to the real implementation
+        return realFs.readFileSync(p, ...rest);
+      },
+    }));
+    try {
+      // Import succeeds — the template is read lazily on first scan, not at load.
+      const { scanReceipt: freshScan } = await import("@/lib/receipt-scan");
+      fetchMock.mockResolvedValue(openaiResponse({ store: null, total: null, products: [] }));
+      await expect(freshScan("data:image/jpeg;base64,AAAA")).rejects.toThrow(/ENOENT/);
+      expect(fetchMock).not.toHaveBeenCalled(); // failed before the network call
+    } finally {
+      vi.doUnmock("node:fs");
+      vi.resetModules();
+    }
   });
 });
