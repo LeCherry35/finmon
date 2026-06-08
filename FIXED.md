@@ -1,5 +1,10 @@
 
-07.06.2026
+08.06.2026
+### ✅ FIXED — `createTransaction` no longer creates a default `'other'` product
+New transactions started with a single default product named `'other'` (cost = amount), inserted alongside the transaction inside a `BEGIN`/`COMMIT` block via a pooled client. Two `TO_FIX` items rode on that block: a `ROLLBACK`-in-`catch` that could mask the original error, and a category upsert that ran outside the client transaction (orphan-category-on-rollback).
+
+**Fix:** Transactions now start with **no products** (the user adds them via the products modal). `createTransaction` is a single `pool.query` insert — no client transaction, no default product — which also dissolves both dependent `TO_FIX` items. The seed script's `backfillOtherProducts` was removed for the same reason, so seeded data matches what the app produces. Legacy `'other'` rows from migration 007's backfill are left in place (harmless; nothing depends on them). Tests in `transactions.test.ts` updated to assert the two-query flow and the absence of a product insert.
+
 ### ✅ FIXED — Product edit form showed stale values when re-opened after a save
 `src/components/ProductsModal.tsx` `ProductItem` initialized `form` once via `useState(() => toForm(product))`. After a save + `revalidatePath`, the fresh `product` prop updated the read-only view but `form` was never re-synced, so re-opening Edit showed the pre-save text (e.g. a value the server had trimmed).
 

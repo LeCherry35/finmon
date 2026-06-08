@@ -3,7 +3,7 @@
 What finmon's tests cover today, and what's still planned. For *how* the tests
 work — stack, mocking seams, fixtures, gotchas — see [`TESTS.md`](./TESTS.md).
 
-**Where we are:** **183 tests + 1 `todo`** across 20 files, all green. Every
+**Where we are:** **205 tests + 1 `todo`** across 23 files, all green. Every
 layer below the UI is unit-tested; the gaps left are a real-Postgres tier, full
 end-to-end flows, and the CI gate.
 
@@ -19,11 +19,11 @@ components.
 
 | Layer | Files | What the tests pin |
 |-------|-------|--------------------|
-| ✅ Pure logic | `src/lib/{filters,charts,chartData,email}.test.ts`, `src/components/charts/registry.test.ts` | Filter parsing & URL round-trips, chart bucketing / date math (clock pinned), Recharts pivot, email templating & HTML-escaping, chart/nav registry integrity |
-| ✅ Server actions | `src/actions/{transactions,categories,plans,products,auth}.test.ts` | The `FormData` → validate → `pool.query` → `revalidatePath` contract: every validation-rejection branch, the success path, unique-violation handling, and `user_id` tenancy on every write. `transactions` also pins the create-time client transaction (tx + default `other` product); `products` pins add/update/delete incl. tag parsing and transaction-ownership checks |
+| ✅ Pure logic | `src/lib/{filters,charts,chartData,email,receipt-scan}.test.ts`, `src/components/charts/registry.test.ts` | Filter parsing & URL round-trips, chart bucketing / date math (clock pinned), Recharts pivot, email templating & HTML-escaping, chart/nav registry integrity, and the receipt scanner (OpenAI request shape, json_schema strict mode, mapping line items → product fields, dropping non-positive/unnamed items, missing-key / non-OK / malformed-JSON / bad-shape errors — `fetch` stubbed) |
+| ✅ Server actions | `src/actions/{transactions,categories,plans,products,auth,receipt}.test.ts` | The `FormData` → validate → `pool.query` → `revalidatePath` contract: every validation-rejection branch, the success path, unique-violation handling, and `user_id` tenancy on every write. `transactions` pins the create-time row insert (`RETURNING id` → `lastTxId`, `has_receipt` → `processing`); `products` pins add/update/delete incl. tag parsing and ownership checks; `receipt` pins `scanReceiptForTransaction` — ownership, image validation, insert+recompute+revalidate, and the failure path that still clears `processing` |
 | ✅ DB queries (mocked) | `src/db/queries.test.ts` | Generated SQL + param array for each branch (category/month clauses, day-vs-month bucket, empty-month short-circuit), the `getTransactions` products-attach round-trip, and a sweep asserting every query is scoped by `user_id = $1` |
 | ✅ Middleware & auth gate | `src/proxy.test.ts`, `src/lib/dal.test.ts` | Every redirect branch of the route guard (protected/auth pages, `?stale` cookie clearing) and `requireUser` / `getCurrentUser` |
-| ✅ Components | `src/components/{CategoryRow,PlanRow,TransactionRow,TransactionCreateSheet,FilterPanel,ProductsModal}.test.tsx`, `charts/ChartTabs.test.tsx` | Edit/save/cancel state, two-click delete confirm, sheet open/auto-close on success, error display, filter/tab toggles producing the right URL params, and the products modal (render/add/delete, total-mismatch hint, mock upload, close) |
+| ✅ Components | `src/components/{CategoryRow,PlanRow,TransactionRow,TransactionCreateForm,TransactionCreateSheet,FilterPanel,ProductsModal}.test.tsx`, `charts/ChartTabs.test.tsx` | Edit/save/cancel state, two-click delete confirm, the verify button (disabled unless status is `ready_to_verify`; fires `verifyTransaction` with the row id when enabled), sheet open/auto-close on success, error display, filter/tab toggles producing the right URL params, the products modal (render/add/delete, total-mismatch hint, receipt scan + scan-error, close), and the create form's receipt flow (button flips to "Scan & add", `has_receipt` set, follow-up `scanReceiptForTransaction` fired against the new row) |
 
 These run with no infrastructure — `npm test` is enough.
 
@@ -43,6 +43,24 @@ verify the things only a live DB proves:
   totals, month filtering (`LEFT(date,7)`), and ordering.
 
 Highest value for the aggregation queries; medium effort.
+
+### ☐ Transaction status workflow
+
+The `status` field (migration 009) shipped without tests. Fixtures were updated to
+carry `status`, but nothing pins the behaviour:
+
+- **`recomputeTransactionStatus`** in `src/actions/products.ts` — assert add/update/
+  delete flip the transaction to `ready_to_verify` when product costs sum to
+  `amount` (within `COST_EPSILON`) and back to `unverified` otherwise, including
+  the `verified` → downgrade case.
+- **`StatusBadge`** in `src/components/TransactionRow.tsx` — label/colour per status
+  and the unknown-status fallback to `unverified`.
+- **`verifyTransaction`** in `src/actions/transactions.ts` — the action itself is
+  untested (the `TransactionRow` test only pins the button → action call). Assert
+  the guarded `ready_to_verify` → `verified` promotion, the `rowCount === 0`
+  "not ready to verify" branch, invalid-id rejection, and `user_id` tenancy.
+
+All fit the existing mocked-action / component tiers; low effort.
 
 ### ☐ End-to-end (Playwright)
 

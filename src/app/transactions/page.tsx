@@ -50,17 +50,19 @@ export default async function TransactionsPage(
       <table className="w-full table-auto md:table-fixed">
         <colgroup>
           <col className="w-28" />
-          <col className="w-32" />
-          <col className="w-28" />
           <col />
+          <col className="w-32" />
+          <col className="w-36" />
+          <col className="w-28" />
           <col className="w-16" />
         </colgroup>
         <thead className="hidden md:table-header-group">
           <tr className="text-left text-zinc-500 border-b border-zinc-200">
             <th className="pb-2 pr-2 text-sm font-medium">Date</th>
             <th className="pb-2 pr-2 text-sm font-medium">Category</th>
+            <th className="pb-2 pr-2 text-sm font-medium">Store</th>
+            <th className="pb-2 pr-2 text-sm font-medium">Status</th>
             <th className="pb-2 pr-2 text-sm font-medium">Amount</th>
-            <th className="pb-2 pr-2 text-sm font-medium">Note</th>
             <th className="pb-2" />
           </tr>
         </thead>
@@ -70,7 +72,7 @@ export default async function TransactionsPage(
           ))}
           {transactions.length === 0 && (
             <tr>
-              <td colSpan={5} className="py-4 text-center text-zinc-400 text-sm">
+              <td colSpan={6} className="py-4 text-center text-zinc-400 text-sm">
                 No transactions match the current filters
               </td>
             </tr>

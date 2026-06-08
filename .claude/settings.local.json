@@ -56,7 +56,8 @@
       "Bash(npm view *)",
       "Bash(npm config *)",
       "Bash(npm test *)",
-      "Bash(npx vitest *)"
+      "Bash(npx vitest *)",
+      "PowerShell(npx tsc --noEmit 2>&1 | Select-Object -First 30; npx vitest run src/actions/transactions.test.ts src/components/TransactionRow.test.tsx src/components/ProductsModal.test.tsx src/components/TransactionCreateSheet.test.tsx src/db/queries.test.ts 2>&1 | Select-Object -Last 15)"
     ]
   }
 }

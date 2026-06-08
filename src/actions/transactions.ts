@@ -6,6 +6,12 @@ import { userOwnsCategory } from "@/db/queries";
 import { requireUser } from "@/lib/dal";
 import type { Product } from "@/actions/products";
 
+export type TransactionStatus =
+  | "processing"
+  | "unverified"
+  | "ready_to_verify"
+  | "verified";
+
 export type Transaction = {
   id: number;
   amount: number;
@@ -13,13 +19,21 @@ export type Transaction = {
   category_id: number;
   date: string;
   note: string | null;
+  store: string | null;
+  status: TransactionStatus;
   category_name?: string;
   products?: Product[];
 };
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
-export type TransactionFormState = { error?: string; successCount: number };
+export type TransactionFormState = {
+  error?: string;
+  successCount: number;
+  /** Id of the transaction created by the most recent successful submit. The
+   *  create UI uses it to fire a follow-up receipt scan against the new row. */
+  lastTxId?: number;
+};
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -34,6 +48,11 @@ export async function createTransaction(
   const categoryName = ((formData.get("category_name") as string | null) ?? "").trim();
   const date = ((formData.get("date") as string | null) ?? "").trim();
   const note = ((formData.get("note") as string | null) ?? "").trim() || null;
+  const store = ((formData.get("store") as string | null) ?? "").trim() || null;
+  // A receipt was staged in the create UI: start the row as 'processing' so it
+  // reads as "scanning" until the follow-up scan attaches products and the
+  // status is recomputed. Without a receipt it keeps the default 'unverified'.
+  const hasReceipt = formData.get("has_receipt") === "1";
 
   const fail = (error: string): TransactionFormState => ({
     error,
@@ -54,32 +73,19 @@ export async function createTransaction(
   );
   const category_id = rows[0].id;
 
-  // Insert the transaction and its default 'other' product atomically: every
-  // transaction is made up of products, and one unspecified at creation gets a
-  // single product mirroring the full amount (transactions.amount stays the
-  // source of truth — products are an optional breakdown the user can refine).
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const { rows: txRows } = await client.query<{ id: number }>(
-      "INSERT INTO transactions (amount, type, category_id, date, note, user_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
-      [amount, type, category_id, date, note, userId]
-    );
-    await client.query(
-      "INSERT INTO products (transaction_id, user_id, name, cost) VALUES ($1, $2, 'other', $3)",
-      [txRows[0].id, userId, amount]
-    );
-    await client.query("COMMIT");
-  } catch (e) {
-    await client.query("ROLLBACK");
-    throw e;
-  } finally {
-    client.release();
-  }
+  // A transaction starts with no products: they're an optional breakdown the
+  // user can add later (transactions.amount stays the source of truth). Status
+  // defaults to 'unverified' until product costs are added that sum to amount —
+  // unless a receipt was staged, in which case it starts 'processing'.
+  const status = hasReceipt ? "processing" : "unverified";
+  const { rows: txRows } = await pool.query<{ id: number }>(
+    "INSERT INTO transactions (amount, type, category_id, date, note, store, status, user_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
+    [amount, type, category_id, date, note, store, status, userId]
+  );
 
   revalidatePath("/transactions");
   revalidatePath("/categories");
-  return { successCount: prevState.successCount + 1 };
+  return { successCount: prevState.successCount + 1, lastTxId: txRows[0].id };
 }
 
 export async function updateTransaction(formData: FormData): Promise<ActionResult> {
@@ -91,6 +97,7 @@ export async function updateTransaction(formData: FormData): Promise<ActionResul
   const category_id = Number(formData.get("category_id"));
   const date = ((formData.get("date") as string | null) ?? "").trim();
   const note = ((formData.get("note") as string | null) ?? "").trim() || null;
+  const store = ((formData.get("store") as string | null) ?? "").trim() || null;
 
   if (!Number.isFinite(id) || id <= 0) return { ok: false, error: "Invalid transaction" };
   if (!Number.isFinite(amount) || amount <= 0) return { ok: false, error: "Amount must be positive" };
@@ -103,9 +110,29 @@ export async function updateTransaction(formData: FormData): Promise<ActionResul
     return { ok: false, error: "Invalid category" };
 
   await pool.query(
-    "UPDATE transactions SET amount = $1, type = $2, category_id = $3, date = $4, note = $5 WHERE id = $6 AND user_id = $7",
-    [amount, type, category_id, date, note, id, userId]
+    "UPDATE transactions SET amount = $1, type = $2, category_id = $3, date = $4, note = $5, store = $6 WHERE id = $7 AND user_id = $8",
+    [amount, type, category_id, date, note, store, id, userId]
   );
+
+  revalidatePath("/transactions");
+  return { ok: true };
+}
+
+/** Promote a transaction from 'ready_to_verify' to 'verified'. Guarded so only a
+ *  transaction whose product costs already sum to its amount (status set to
+ *  'ready_to_verify' by recomputeTransactionStatus) can be verified — the WHERE
+ *  clause enforces the source state, so a no-op update means it wasn't eligible. */
+export async function verifyTransaction(formData: FormData): Promise<ActionResult> {
+  const { id: userId } = await requireUser();
+
+  const id = Number(formData.get("id"));
+  if (!Number.isFinite(id) || id <= 0) return { ok: false, error: "Invalid transaction" };
+
+  const { rowCount } = await pool.query(
+    "UPDATE transactions SET status = 'verified' WHERE id = $1 AND user_id = $2 AND status = 'ready_to_verify'",
+    [id, userId]
+  );
+  if (rowCount === 0) return { ok: false, error: "Transaction is not ready to verify" };
 
   revalidatePath("/transactions");
   return { ok: true };

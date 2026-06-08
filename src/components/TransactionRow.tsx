@@ -1,10 +1,28 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
-import { updateTransaction, deleteTransaction } from "@/actions/transactions";
-import type { Transaction } from "@/actions/transactions";
+import { updateTransaction, deleteTransaction, verifyTransaction } from "@/actions/transactions";
+import type { Transaction, TransactionStatus } from "@/actions/transactions";
 import type { Category } from "@/actions/categories";
 import ProductsModal from "@/components/ProductsModal";
+
+const STATUS_META: Record<TransactionStatus, { label: string; cls: string }> = {
+  processing: { label: "Processing", cls: "bg-amber-100 text-amber-700" },
+  unverified: { label: "Unverified", cls: "bg-zinc-100 text-zinc-600" },
+  ready_to_verify: { label: "Ready to verify", cls: "bg-blue-100 text-blue-700" },
+  verified: { label: "Verified", cls: "bg-emerald-100 text-emerald-700" },
+};
+
+function StatusBadge({ status }: { status: TransactionStatus }) {
+  const { label, cls } = STATUS_META[status] ?? STATUS_META.unverified;
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${cls}`}
+    >
+      {label}
+    </span>
+  );
+}
 
 const MOBILE_DATE_FMT = new Intl.DateTimeFormat("en-US", {
   month: "short",
@@ -33,6 +51,7 @@ export default function TransactionRow({
   const [categoryId, setCategoryId] = useState(String(tx.category_id));
   const [date, setDate] = useState(tx.date);
   const [note, setNote] = useState(tx.note ?? "");
+  const [store, setStore] = useState(tx.store ?? "");
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -53,6 +72,7 @@ export default function TransactionRow({
       fd.append("category_id", categoryId);
       fd.append("date", date);
       fd.append("note", note);
+      fd.append("store", store);
       const res = await updateTransaction(fd);
       if (!res.ok) {
         setError(res.error);
@@ -69,6 +89,7 @@ export default function TransactionRow({
     setCategoryId(String(tx.category_id));
     setDate(tx.date);
     setNote(tx.note ?? "");
+    setStore(tx.store ?? "");
     setError(null);
     setEditing(false);
   }
@@ -88,6 +109,21 @@ export default function TransactionRow({
     });
   }
 
+  function handleVerify() {
+    startTransition(async () => {
+      const fd = new FormData();
+      fd.append("id", String(tx.id));
+      const res = await verifyTransaction(fd);
+      if (!res.ok) {
+        setError(res.error);
+        return;
+      }
+      setError(null);
+    });
+  }
+
+  const canVerify = tx.status === "ready_to_verify";
+
   const inputCls =
     "border border-zinc-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-zinc-400";
 
@@ -99,7 +135,7 @@ export default function TransactionRow({
     <>
       {/* MOBILE row — single-cell card */}
       <tr className="md:hidden">
-        <td colSpan={5} className="p-0">
+        <td colSpan={6} className="p-0">
           <MobileCard
             tx={tx}
             categories={categories}
@@ -119,12 +155,16 @@ export default function TransactionRow({
             setDate={setDate}
             note={note}
             setNote={setNote}
+            store={store}
+            setStore={setStore}
             isPending={isPending}
             error={error}
             confirmDelete={confirmDelete}
             onSave={handleSave}
             onCancel={handleCancel}
             onDelete={handleDelete}
+            onVerify={handleVerify}
+            canVerify={canVerify}
             amountClass={amountClass}
             amountText={amountText}
           />
@@ -160,6 +200,17 @@ export default function TransactionRow({
                 ))}
               </select>
             </td>
+            <td className="py-2 pr-2">
+              <input
+                value={store}
+                onChange={(e) => setStore(e.target.value)}
+                placeholder="Store"
+                className={`${inputCls} w-full`}
+              />
+            </td>
+            <td className="py-2 pr-2">
+              <StatusBadge status={tx.status} />
+            </td>
             <td className="py-2 pr-2 text-right">
               <input
                 type="number"
@@ -168,14 +219,6 @@ export default function TransactionRow({
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
                 className={`${inputCls} w-full text-center`}
-              />
-            </td>
-            <td className="py-2 pr-2">
-              <input
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                placeholder="Note"
-                className={`${inputCls} w-full max-w-full`}
               />
             </td>
             <td className="py-2">
@@ -200,40 +243,59 @@ export default function TransactionRow({
           </tr>
           {error && (
             <tr className="hidden md:table-row border-b border-zinc-100">
-              <td colSpan={5} className="pb-2 text-xs text-red-600">
+              <td colSpan={6} className="pb-2 text-xs text-red-600">
                 {error}
               </td>
             </tr>
           )}
         </>
       ) : (
-        <tr className="hidden md:table-row border-b border-zinc-100">
+        <tr
+          onClick={() => setShowProducts(true)}
+          title="View products"
+          className="hidden md:table-row border-b border-zinc-100 cursor-pointer hover:bg-zinc-50"
+        >
           <td className="py-2 pr-2 text-sm text-zinc-500">{tx.date}</td>
           <td className="py-2 pr-2 text-sm">{tx.category_name}</td>
+          <td className="py-2 pr-2 text-sm text-zinc-500 truncate">
+            {tx.store ?? <span className="text-zinc-300">—</span>}
+          </td>
+          <td className="py-2 pr-2">
+            <StatusBadge status={tx.status} />
+          </td>
           <td
             className={`py-2 pr-2 text-sm font-mono ${amountClass}`}
           >
             {amountText}
           </td>
-          <td className="py-2 pr-2 text-sm text-zinc-400">{tx.note ?? "—"}</td>
           <td className="py-2">
             <div className="flex gap-2 justify-end">
               <button
-                onClick={() => setShowProducts(true)}
-                title={`Products (${productCount})`}
-                className="text-zinc-400 hover:text-zinc-700"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleVerify();
+                }}
+                disabled={!canVerify || isPending}
+                title={canVerify ? "Verify" : "Not ready to verify"}
+                className="text-zinc-400 enabled:hover:text-emerald-600 disabled:opacity-40"
               >
-                <BoxIcon />
+                <VerifyIcon />
               </button>
               <button
-                onClick={() => setEditing(true)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setEditing(true);
+                }}
                 title="Edit"
                 className="text-zinc-400 hover:text-zinc-700"
               >
                 <PencilIcon />
               </button>
               <button
-                onClick={handleDelete}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleDelete();
+                }}
                 disabled={isPending}
                 title={confirmDelete ? "Click again to confirm" : "Delete"}
                 className={`disabled:opacity-40 ${
@@ -275,12 +337,16 @@ function MobileCard({
   setDate,
   note,
   setNote,
+  store,
+  setStore,
   isPending,
   error,
   confirmDelete,
   onSave,
   onCancel,
   onDelete,
+  onVerify,
+  canVerify,
   amountClass,
   amountText,
 }: {
@@ -302,12 +368,16 @@ function MobileCard({
   setDate: (v: string) => void;
   note: string;
   setNote: (v: string) => void;
+  store: string;
+  setStore: (v: string) => void;
   isPending: boolean;
   error: string | null;
   confirmDelete: boolean;
   onSave: () => void;
   onCancel: () => void;
   onDelete: () => void;
+  onVerify: () => void;
+  canVerify: boolean;
   amountClass: string;
   amountText: string;
 }) {
@@ -354,6 +424,12 @@ function MobileCard({
           />
         </div>
         <input
+          value={store}
+          onChange={(e) => setStore(e.target.value)}
+          placeholder="Store (optional)"
+          className={`w-full ${sheetInputCls}`}
+        />
+        <input
           value={note}
           onChange={(e) => setNote(e.target.value)}
           placeholder="Note (optional)"
@@ -389,13 +465,20 @@ function MobileCard({
       >
         <div className="flex-1 min-w-0">
           <div className="text-sm truncate">{tx.category_name}</div>
-          <div className="text-[11px] text-zinc-400">{formatMobileDate(tx.date)}</div>
+          <div className="flex items-center gap-2 mt-0.5">
+            <span className="text-[11px] text-zinc-400">{formatMobileDate(tx.date)}</span>
+            <StatusBadge status={tx.status} />
+          </div>
         </div>
         <div className={`text-sm font-mono shrink-0 ${amountClass}`}>{amountText}</div>
         <ChevronIcon open={expanded} />
       </button>
       {expanded && (
         <div className="pb-3 space-y-3">
+          <div className="text-sm text-zinc-500">
+            <span className="text-zinc-400">Store: </span>
+            {tx.store ?? "—"}
+          </div>
           <div className="text-sm text-zinc-500">
             <span className="text-zinc-400">Note: </span>
             {tx.note ?? "—"}
@@ -407,6 +490,16 @@ function MobileCard({
             <BoxIcon />
             Products ({productCount})
           </button>
+          {canVerify && (
+            <button
+              onClick={onVerify}
+              disabled={isPending}
+              className="w-full min-h-11 rounded border border-emerald-500 text-sm text-emerald-700 bg-emerald-50 flex items-center justify-center gap-2 disabled:opacity-40"
+            >
+              <VerifyIcon />
+              Verify
+            </button>
+          )}
           <div className="flex gap-2">
             <button
               onClick={() => setEditing(true)}
@@ -460,6 +553,15 @@ function TrashIcon() {
       <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
       <path d="M10 11v6M14 11v6" />
       <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+    </svg>
+  );
+}
+
+function VerifyIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+      <polyline points="22 4 12 14.01 9 11.01" />
     </svg>
   );
 }

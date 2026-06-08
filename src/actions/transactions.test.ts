@@ -46,13 +46,10 @@ describe("createTransaction", () => {
     expect(query).not.toHaveBeenCalled();
   });
 
-  it("upserts the category, inserts the row + default product, and revalidates on success", async () => {
+  it("upserts the category, inserts the row with no products, and revalidates on success", async () => {
     query
-      .mockResolvedValueOnce({ rows: [{ id: 7 }] }) // category upsert (pool)
-      .mockResolvedValueOnce({}) // BEGIN
-      .mockResolvedValueOnce({ rows: [{ id: 42 }] }) // transaction insert RETURNING id
-      .mockResolvedValueOnce({}) // product insert
-      .mockResolvedValueOnce({}); // COMMIT
+      .mockResolvedValueOnce({ rows: [{ id: 7 }] }) // category upsert
+      .mockResolvedValueOnce({ rows: [{ id: 42 }] }); // transaction insert (RETURNING id)
 
     const result = await createTransaction(
       prev,
@@ -62,46 +59,58 @@ describe("createTransaction", () => {
         category_name: " Food ",
         date: "2026-06-01",
         note: "lunch",
+        store: "Tesco",
       }),
     );
 
-    expect(result).toEqual({ successCount: 3 });
-    // exactly: category upsert + BEGIN + transaction INSERT + product INSERT + COMMIT
-    expect(query).toHaveBeenCalledTimes(5);
+    // returns the new transaction id so the create UI can fire a receipt scan
+    expect(result).toEqual({ successCount: 3, lastTxId: 42 });
+    // exactly: category upsert + transaction INSERT (no default product anymore)
+    expect(query).toHaveBeenCalledTimes(2);
     // category upsert: trimmed name + user id
     expect(query.mock.calls[0][1]).toEqual(["Food", TEST_USER_ID]);
-    // transaction insert: amount, type, category_id, date, note, user id
-    expect(query.mock.calls[2][1]).toEqual([
-      12.5,
-      "spend",
-      7,
-      "2026-06-01",
-      "lunch",
-      TEST_USER_ID,
-    ]);
-    // default product 'other' mirrors the amount, scoped to the new transaction
-    const [productSql, productParams] = query.mock.calls[3];
-    expect(productSql).toMatch(/INSERT INTO products/);
-    expect(productSql).toMatch(/'other'/);
-    expect(productParams).toEqual([42, TEST_USER_ID, 12.5]);
-    expect(release).toHaveBeenCalled();
+    // transaction insert: amount, type, category_id, date, note, store, status, user id
+    const [txSql, txParams] = query.mock.calls[1];
+    expect(txSql).toMatch(/INSERT INTO transactions/);
+    expect(txSql).toMatch(/RETURNING id/);
+    expect(txParams).toEqual([12.5, "spend", 7, "2026-06-01", "lunch", "Tesco", "unverified", TEST_USER_ID]);
+    // no product insert
+    expect(query.mock.calls.some(([sql]) => /INSERT INTO products/.test(sql))).toBe(false);
     expect(revalidatePath).toHaveBeenCalledWith("/transactions");
     expect(revalidatePath).toHaveBeenCalledWith("/categories");
+  });
+
+  it("starts the row as 'processing' when a receipt is staged (has_receipt)", async () => {
+    query
+      .mockResolvedValueOnce({ rows: [{ id: 7 }] }) // category upsert
+      .mockResolvedValueOnce({ rows: [{ id: 99 }] }); // transaction insert
+
+    const result = await createTransaction(
+      prev,
+      formData({
+        amount: "30",
+        type: "spend",
+        category_name: "Food",
+        date: "2026-06-01",
+        has_receipt: "1",
+      }),
+    );
+
+    expect(result).toEqual({ successCount: 3, lastTxId: 99 });
+    // status param (index 6) is 'processing' until the scan attaches products
+    expect(query.mock.calls[1][1][6]).toBe("processing");
   });
 
   it("stores an empty note as null", async () => {
     query
       .mockResolvedValueOnce({ rows: [{ id: 1 }] }) // category upsert
-      .mockResolvedValueOnce({}) // BEGIN
-      .mockResolvedValueOnce({ rows: [{ id: 5 }] }) // transaction insert
-      .mockResolvedValueOnce({}) // product insert
-      .mockResolvedValueOnce({}); // COMMIT
+      .mockResolvedValueOnce({ rows: [{ id: 2 }] }); // transaction insert
     await createTransaction(
       prev,
       formData({ amount: "5", type: "income", category_name: "Pay", date: "2026-06-01" }),
     );
-    // transaction insert is the 3rd query call; note is param index 4
-    expect(query.mock.calls[2][1][4]).toBeNull();
+    // transaction insert is the 2nd query call; note is param index 4
+    expect(query.mock.calls[1][1][4]).toBeNull();
   });
 });
 
@@ -141,8 +150,8 @@ describe("updateTransaction", () => {
     const result = await updateTransaction(formData(valid));
     expect(result).toEqual({ ok: true });
     const [sql, params] = query.mock.calls[1];
-    expect(sql).toMatch(/WHERE id = \$6 AND user_id = \$7/);
-    expect(params).toEqual([10, "spend", 3, "2026-06-01", null, 5, TEST_USER_ID]);
+    expect(sql).toMatch(/WHERE id = \$7 AND user_id = \$8/);
+    expect(params).toEqual([10, "spend", 3, "2026-06-01", null, null, 5, TEST_USER_ID]);
     expect(revalidatePath).toHaveBeenCalledWith("/transactions");
   });
 });

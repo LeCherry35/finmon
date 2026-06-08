@@ -4,3 +4,8 @@ SQL_DB_NAME=
 SQL_DB_USER=
 SQL_DB_PASSWORD=
 SQL_DB_SSL=false
+
+# Receipt scanning (OpenAI vision). Without OPENAI_API_KEY, scanning is disabled
+# and returns a friendly error (transactions still work). OPENAI_MODEL is optional.
+OPENAI_API_KEY=
+OPENAI_MODEL=gpt-4o-mini

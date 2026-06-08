@@ -5,12 +5,14 @@ import userEvent from "@testing-library/user-event";
 import type { Transaction } from "@/actions/transactions";
 import type { Product } from "@/actions/products";
 
-const { addProduct, updateProduct, deleteProduct } = vi.hoisted(() => ({
+const { addProduct, updateProduct, deleteProduct, scanReceiptForTransaction } = vi.hoisted(() => ({
   addProduct: vi.fn(),
   updateProduct: vi.fn(),
   deleteProduct: vi.fn(),
+  scanReceiptForTransaction: vi.fn(),
 }));
 vi.mock("@/actions/products", () => ({ addProduct, updateProduct, deleteProduct }));
+vi.mock("@/actions/receipt", () => ({ scanReceiptForTransaction }));
 
 import ProductsModal from "@/components/ProductsModal";
 
@@ -23,6 +25,9 @@ const product: Product = {
   product_type: "milk",
   tags: ["vegan", "breakfast"],
   description: "barista edition",
+  price: 1.75,
+  amount: 2,
+  unit: "L",
 };
 
 const tx: Transaction = {
@@ -32,6 +37,8 @@ const tx: Transaction = {
   category_id: 1,
   date: "2026-06-01",
   note: "lunch",
+  store: "Tesco",
+  status: "unverified",
   category_name: "Food",
   products: [product],
 };
@@ -40,6 +47,7 @@ beforeEach(() => {
   addProduct.mockReset();
   updateProduct.mockReset();
   deleteProduct.mockReset();
+  scanReceiptForTransaction.mockReset();
 });
 afterEach(() => vi.clearAllMocks());
 
@@ -90,14 +98,32 @@ describe("ProductsModal", () => {
     expect(fd.get("id")).toBe("1");
   });
 
-  it("shows the selected filename for the mock upload", async () => {
+  it("scans an uploaded receipt for the transaction", async () => {
+    scanReceiptForTransaction.mockResolvedValue({ ok: true });
     render(<ProductsModal tx={tx} onClose={() => {}} />);
-    const input = (await screen.findByText("Upload receipt"))
-      .closest("div")!
-      .querySelector('input[type="file"]') as HTMLInputElement;
-    const file = new File(["x"], "receipt.pdf", { type: "application/pdf" });
-    await userEvent.upload(input, file);
-    expect(await screen.findByText(/receipt\.pdf/)).toBeInTheDocument();
+
+    // Scan is disabled until an image is staged.
+    expect(await screen.findByRole("button", { name: "Scan" })).toBeDisabled();
+
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await userEvent.upload(input, new File(["x"], "receipt.jpg", { type: "image/jpeg" }));
+    expect(await screen.findByText(/receipt\.jpg/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Scan" }));
+
+    await waitFor(() => expect(scanReceiptForTransaction).toHaveBeenCalledTimes(1));
+    const fd = scanReceiptForTransaction.mock.calls[0][0] as FormData;
+    expect(fd.get("transaction_id")).toBe("42");
+    expect(String(fd.get("image"))).toMatch(/^data:image\//);
+  });
+
+  it("surfaces a scan error inline", async () => {
+    scanReceiptForTransaction.mockResolvedValue({ ok: false, error: "Receipt scan failed" });
+    render(<ProductsModal tx={tx} onClose={() => {}} />);
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await userEvent.upload(input, new File(["x"], "receipt.jpg", { type: "image/jpeg" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Scan" }));
+    expect(await screen.findByText("Receipt scan failed")).toBeInTheDocument();
   });
 
   it("calls onClose when the close button is clicked", async () => {

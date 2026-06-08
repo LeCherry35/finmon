@@ -5,13 +5,15 @@ import userEvent from "@testing-library/user-event";
 import type { Transaction } from "@/actions/transactions";
 import type { Category } from "@/actions/categories";
 
-const { updateTransaction, deleteTransaction } = vi.hoisted(() => ({
+const { updateTransaction, deleteTransaction, verifyTransaction } = vi.hoisted(() => ({
   updateTransaction: vi.fn(),
   deleteTransaction: vi.fn(),
+  verifyTransaction: vi.fn(),
 }));
 vi.mock("@/actions/transactions", () => ({
   updateTransaction,
   deleteTransaction,
+  verifyTransaction,
 }));
 
 import TransactionRow from "@/components/TransactionRow";
@@ -28,6 +30,8 @@ const tx: Transaction = {
   category_id: 1,
   date: "2026-06-01",
   note: "lunch",
+  store: "Tesco",
+  status: "unverified",
   category_name: "Food",
 };
 
@@ -40,6 +44,7 @@ function desktopRow(): HTMLElement {
 beforeEach(() => {
   updateTransaction.mockReset();
   deleteTransaction.mockReset();
+  verifyTransaction.mockReset();
 });
 afterEach(() => vi.clearAllMocks());
 
@@ -107,6 +112,37 @@ describe("TransactionRow", () => {
     expect(fd.get("id")).toBe("42");
     expect(fd.get("amount")).toBe("20");
     expect(fd.get("category_id")).toBe("1");
+  });
+
+  it("disables the verify button unless the status is ready_to_verify", () => {
+    render(
+      <table>
+        <tbody>
+          <TransactionRow tx={tx} categories={categories} />
+        </tbody>
+      </table>,
+    );
+    expect(within(desktopRow()).getByTitle("Not ready to verify")).toBeDisabled();
+    expect(verifyTransaction).not.toHaveBeenCalled();
+  });
+
+  it("verifies a ready_to_verify transaction", async () => {
+    verifyTransaction.mockResolvedValue({ ok: true });
+    render(
+      <table>
+        <tbody>
+          <TransactionRow
+            tx={{ ...tx, status: "ready_to_verify" }}
+            categories={categories}
+          />
+        </tbody>
+      </table>,
+    );
+    await userEvent.click(within(desktopRow()).getByTitle("Verify"));
+
+    await waitFor(() => expect(verifyTransaction).toHaveBeenCalledTimes(1));
+    const fd = verifyTransaction.mock.calls[0][0] as FormData;
+    expect(fd.get("id")).toBe("42");
   });
 
   it("shows the server error and stays editing on a failed update", async () => {

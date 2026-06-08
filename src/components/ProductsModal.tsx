@@ -3,8 +3,10 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { createPortal } from "react-dom";
 import { addProduct, updateProduct, deleteProduct } from "@/actions/products";
+import { scanReceiptForTransaction } from "@/actions/receipt";
 import type { Product } from "@/actions/products";
 import type { Transaction } from "@/actions/transactions";
+import ReceiptUpload, { type StagedImage } from "@/components/ReceiptUpload";
 
 type FormFields = {
   name: string;
@@ -13,6 +15,9 @@ type FormFields = {
   product_type: string;
   tags: string;
   description: string;
+  price: string;
+  amount: string;
+  unit: string;
 };
 
 const EMPTY_FORM: FormFields = {
@@ -22,6 +27,9 @@ const EMPTY_FORM: FormFields = {
   product_type: "",
   tags: "",
   description: "",
+  price: "",
+  amount: "",
+  unit: "",
 };
 
 function toForm(p: Product): FormFields {
@@ -32,6 +40,9 @@ function toForm(p: Product): FormFields {
     product_type: p.product_type ?? "",
     tags: p.tags.join(", "),
     description: p.description ?? "",
+    price: p.price != null ? String(p.price) : "",
+    amount: p.amount != null ? String(p.amount) : "",
+    unit: p.unit ?? "",
   };
 }
 
@@ -42,6 +53,9 @@ function appendFields(fd: FormData, f: FormFields) {
   fd.append("product_type", f.product_type);
   fd.append("tags", f.tags);
   fd.append("description", f.description);
+  fd.append("price", f.price);
+  fd.append("amount", f.amount);
+  fd.append("unit", f.unit);
 }
 
 const inputCls =
@@ -115,7 +129,7 @@ export default function ProductsModal({
             {mismatch && " — these don't match (that's allowed)"}
           </p>
 
-          <MockUpload txId={tx.id} />
+          <ReceiptScanner txId={tx.id} />
 
           <AddProductForm txId={tx.id} />
         </div>
@@ -210,6 +224,17 @@ function ProductItem({ product }: { product: Product }) {
         </div>
         <div className="text-xs text-zinc-500 space-x-2">
           {product.cost != null && <span>{product.cost.toFixed(2)}</span>}
+          {(product.amount != null || product.unit) && (
+            <span>
+              · {product.amount != null ? product.amount : ""}
+              {product.amount != null && product.unit ? " " : ""}
+              {product.unit ?? ""}
+              {product.price != null && ` @ ${product.price.toFixed(2)}`}
+            </span>
+          )}
+          {product.amount == null && !product.unit && product.price != null && (
+            <span>· @ {product.price.toFixed(2)}</span>
+          )}
           {product.product_type && <span>· {product.product_type}</span>}
         </div>
         {product.tags.length > 0 && (
@@ -332,6 +357,33 @@ function ProductFieldsEditor({
           className={inputCls}
         />
         <input
+          type="number"
+          step="0.01"
+          min="0.01"
+          value={form.price}
+          onChange={set("price")}
+          placeholder="Price"
+          aria-label="Price"
+          className={inputCls}
+        />
+        <input
+          type="number"
+          step="0.01"
+          min="0.01"
+          value={form.amount}
+          onChange={set("amount")}
+          placeholder="Quantity"
+          aria-label="Quantity"
+          className={inputCls}
+        />
+        <input
+          value={form.unit}
+          onChange={set("unit")}
+          placeholder="Unit"
+          aria-label="Unit"
+          className={inputCls}
+        />
+        <input
           value={form.product_type}
           onChange={set("product_type")}
           placeholder="Type"
@@ -343,7 +395,7 @@ function ProductFieldsEditor({
           onChange={set("tags")}
           placeholder="Tags (comma-separated)"
           aria-label="Tags"
-          className={inputCls}
+          className={`col-span-2 ${inputCls}`}
         />
       </div>
       <textarea
@@ -358,37 +410,55 @@ function ProductFieldsEditor({
   );
 }
 
-/** Receipt upload — UI only. File selection is captured and shown but not sent
- *  anywhere yet (parsing/import is a planned follow-up). */
-function MockUpload({ txId }: { txId: number }) {
-  const [fileName, setFileName] = useState<string | null>(null);
-  const inputId = `receipt-${txId}`;
+/** Receipt scanner — uploads a receipt photo to the OpenAI vision pipeline and
+ *  attaches the parsed line items as products. The list above refreshes live
+ *  because `scanReceiptForTransaction` calls `revalidatePath("/transactions")`,
+ *  which re-flows this open modal's `tx` props (same mechanism as add/edit). */
+function ReceiptScanner({ txId }: { txId: number }) {
+  const [image, setImage] = useState<StagedImage | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
+
+  function scan() {
+    if (!image) return;
+    startTransition(async () => {
+      const fd = new FormData();
+      fd.append("transaction_id", String(txId));
+      fd.append("image", image.dataUrl);
+      const res = await scanReceiptForTransaction(fd);
+      if (!res.ok) {
+        setError(res.error);
+        return;
+      }
+      setError(null);
+      setImage(null);
+    });
+  }
 
   return (
-    <div className="rounded-lg border border-dashed border-zinc-300 p-4 text-center">
-      <input
-        id={inputId}
-        type="file"
-        accept="image/*,.pdf,.csv"
-        className="hidden"
-        onChange={(e) => setFileName(e.target.files?.[0]?.name ?? null)}
-      />
-      <label
-        htmlFor={inputId}
-        className="cursor-pointer inline-flex items-center gap-2 text-sm text-zinc-600 hover:text-zinc-900"
-      >
-        <UploadIcon />
-        Upload receipt
-      </label>
-      {fileName ? (
-        <p className="mt-2 text-xs text-zinc-500">
-          Selected: {fileName} — import isn&apos;t wired up yet (mock)
-        </p>
-      ) : (
-        <p className="mt-2 text-[11px] text-zinc-400">
-          Image, PDF or CSV — parsing coming later
-        </p>
-      )}
+    <div className="rounded-lg border border-dashed border-zinc-300 p-4 space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <ReceiptUpload
+          value={image}
+          onChange={(img) => {
+            setImage(img);
+            setError(null);
+          }}
+          disabled={isPending}
+        />
+        <button
+          type="button"
+          onClick={scan}
+          disabled={!image || isPending}
+          className="shrink-0 rounded bg-zinc-900 text-white text-sm px-3 py-1.5 disabled:opacity-50"
+        >
+          {isPending ? "Scanning…" : "Scan"}
+        </button>
+      </div>
+      {error && <p className="text-xs text-red-600">{error}</p>}
+      <p className="text-[11px] text-zinc-400">
+        Upload a receipt photo to auto-add its line items as products.
+      </p>
     </div>
   );
 }
@@ -418,16 +488,6 @@ function XIcon() {
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <line x1="18" y1="6" x2="6" y2="18" />
       <line x1="6" y1="6" x2="18" y2="18" />
-    </svg>
-  );
-}
-
-function UploadIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-      <polyline points="17 8 12 3 7 8" />
-      <line x1="12" y1="3" x2="12" y2="15" />
     </svg>
   );
 }

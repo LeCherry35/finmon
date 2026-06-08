@@ -20,6 +20,10 @@ beforeEach(() => {
   query.mockReset();
   revalidatePath.mockReset();
   userOwnsTransaction.mockReset();
+  // Default return covers the recompute round-trip that every mutation runs
+  // after its primary query (a SELECT returning amount/total, then an UPDATE),
+  // and supplies the `transaction_id` that update/delete read via RETURNING.
+  query.mockResolvedValue({ rows: [{ transaction_id: 9, amount: 0, total: 0 }] });
 });
 afterEach(() => vi.clearAllMocks());
 
@@ -48,7 +52,6 @@ describe("addProduct", () => {
 
   it("inserts the product scoped to the user and revalidates", async () => {
     userOwnsTransaction.mockResolvedValueOnce(true);
-    query.mockResolvedValueOnce({});
     const result = await addProduct(
       formData({
         transaction_id: "5",
@@ -58,12 +61,15 @@ describe("addProduct", () => {
         product_type: " milk ",
         tags: "vegan, breakfast, ",
         description: " barista edition ",
+        price: "1.75",
+        amount: "2",
+        unit: " L ",
       }),
     );
     expect(result).toEqual({ ok: true });
     const [sql, params] = query.mock.calls[0];
     expect(sql).toMatch(/INSERT INTO products/);
-    // transaction_id, user_id, name, brand, cost, product_type, tags, description
+    // transaction_id, user_id, name, brand, cost, product_type, tags, description, price, amount, unit
     expect(params).toEqual([
       5,
       TEST_USER_ID,
@@ -73,16 +79,30 @@ describe("addProduct", () => {
       "milk",
       ["vegan", "breakfast"],
       "barista edition",
+      1.75,
+      2,
+      "L",
     ]);
     expect(revalidatePath).toHaveBeenCalledWith("/transactions");
   });
 
   it("treats omitted optional fields as null and empty tags", async () => {
     userOwnsTransaction.mockResolvedValueOnce(true);
-    query.mockResolvedValueOnce({});
     await addProduct(formData({ transaction_id: "5", name: "Bread" }));
     const params = query.mock.calls[0][1];
-    expect(params).toEqual([5, TEST_USER_ID, "Bread", null, null, null, [], null]);
+    expect(params).toEqual([
+      5,
+      TEST_USER_ID,
+      "Bread",
+      null,
+      null,
+      null,
+      [],
+      null,
+      null,
+      null,
+      null,
+    ]);
   });
 });
 
@@ -98,14 +118,25 @@ describe("updateProduct", () => {
   });
 
   it("updates scoped by user id and revalidates", async () => {
-    query.mockResolvedValueOnce({});
     const result = await updateProduct(
       formData({ id: "9", name: "Eggs", cost: "4", tags: "protein" }),
     );
     expect(result).toEqual({ ok: true });
     const [sql, params] = query.mock.calls[0];
-    expect(sql).toMatch(/WHERE id = \$7 AND user_id = \$8/);
-    expect(params).toEqual(["Eggs", null, 4, null, ["protein"], null, 9, TEST_USER_ID]);
+    expect(sql).toMatch(/WHERE id = \$10 AND user_id = \$11/);
+    expect(params).toEqual([
+      "Eggs",
+      null,
+      4,
+      null,
+      ["protein"],
+      null,
+      null,
+      null,
+      null,
+      9,
+      TEST_USER_ID,
+    ]);
     expect(revalidatePath).toHaveBeenCalledWith("/transactions");
   });
 });
@@ -121,7 +152,6 @@ describe("deleteProduct", () => {
   });
 
   it("deletes scoped by user id and revalidates", async () => {
-    query.mockResolvedValueOnce({});
     const result = await deleteProduct(formData({ id: "9" }));
     expect(result).toEqual({ ok: true });
     const [sql, params] = query.mock.calls[0];
