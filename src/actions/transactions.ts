@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { pool } from "@/db";
 import { userOwnsCategory } from "@/db/queries";
 import { requireUser } from "@/lib/dal";
-import type { Product } from "@/actions/products";
+import { recomputeTransactionStatus, type Product } from "@/actions/products";
 
 export type TransactionStatus =
   | "processing"
@@ -109,10 +109,27 @@ export async function updateTransaction(formData: FormData): Promise<ActionResul
   if (!(await userOwnsCategory(userId, category_id)))
     return { ok: false, error: "Invalid category" };
 
-  await pool.query(
-    "UPDATE transactions SET amount = $1, type = $2, category_id = $3, date = $4, note = $5, store = $6 WHERE id = $7 AND user_id = $8",
+  // Capture the previous amount in the same round-trip so we can tell whether
+  // the total actually moved. (NUMERIC comes back from pg as a string.)
+  const { rows: updated } = await pool.query<{ prev_amount: string }>(
+    `WITH prev AS (
+       SELECT amount FROM transactions WHERE id = $7 AND user_id = $8
+     )
+     UPDATE transactions t
+     SET amount = $1, type = $2, category_id = $3, date = $4, note = $5, store = $6
+     FROM prev
+     WHERE t.id = $7 AND t.user_id = $8
+     RETURNING prev.amount AS prev_amount`,
     [amount, type, category_id, date, note, store, id, userId]
   );
+
+  // Changing the amount can make the product-cost sum start (or stop) matching
+  // the new total, so re-derive status — but only when the amount actually
+  // moved, so editing an unrelated field (note/date/category) never downgrades
+  // a 'verified' row.
+  if (updated[0] && Number(updated[0].prev_amount) !== amount) {
+    await recomputeTransactionStatus(userId, id);
+  }
 
   revalidatePath("/transactions");
   return { ok: true };

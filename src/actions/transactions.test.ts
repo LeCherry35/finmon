@@ -146,13 +146,36 @@ describe("updateTransaction", () => {
   it("updates scoped by user id on success", async () => {
     query
       .mockResolvedValueOnce({ rowCount: 1 }) // ownership check
-      .mockResolvedValueOnce({}); // update
+      .mockResolvedValueOnce({ rows: [{ prev_amount: "10.00" }] }); // update (amount unchanged)
     const result = await updateTransaction(formData(valid));
     expect(result).toEqual({ ok: true });
     const [sql, params] = query.mock.calls[1];
-    expect(sql).toMatch(/WHERE id = \$7 AND user_id = \$8/);
+    expect(sql).toMatch(/WHERE t\.id = \$7 AND t\.user_id = \$8/);
     expect(params).toEqual([10, "spend", 3, "2026-06-01", null, null, 5, TEST_USER_ID]);
     expect(revalidatePath).toHaveBeenCalledWith("/transactions");
+  });
+
+  it("recomputes status when the amount changed", async () => {
+    query
+      .mockResolvedValueOnce({ rowCount: 1 }) // ownership check
+      .mockResolvedValueOnce({ rows: [{ prev_amount: "10.00" }] }) // update (amount moved 10 -> 25)
+      .mockResolvedValueOnce({ rows: [{ amount: 25, total: 25 }] }) // recompute SELECT
+      .mockResolvedValueOnce({}); // recompute UPDATE
+    const result = await updateTransaction(formData({ ...valid, amount: "25" }));
+    expect(result).toEqual({ ok: true });
+    // ownership + update + recompute (SELECT + UPDATE) = 4 calls
+    expect(query).toHaveBeenCalledTimes(4);
+    expect(query.mock.calls[2][0]).toMatch(/COALESCE\(SUM\(p\.cost\), 0\)/);
+  });
+
+  it("does not recompute status when the amount is unchanged", async () => {
+    query
+      .mockResolvedValueOnce({ rowCount: 1 }) // ownership check
+      .mockResolvedValueOnce({ rows: [{ prev_amount: "10.00" }] }); // update (amount stays 10)
+    const result = await updateTransaction(formData(valid));
+    expect(result).toEqual({ ok: true });
+    // ownership + update only — no recompute
+    expect(query).toHaveBeenCalledTimes(2);
   });
 });
 
