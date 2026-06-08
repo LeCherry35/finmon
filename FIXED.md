@@ -1,5 +1,10 @@
 
 08.06.2026
+### ✅ FIXED — Receipt scan could leave a transaction stuck on `processing` forever
+A transaction added with a receipt is created `processing`; the only thing that clears it is `scanReceiptForTransaction`'s `finally` (recompute status + `revalidatePath`). Three holes meant a row could sit on `processing` indefinitely: (1) the image-format and ownership checks `return`ed **before** the `try`, so a bad/missing image skipped the `finally` recompute entirely; (2) `scanReceipt`'s OpenAI `fetch` had **no timeout**, so a hung request never reached the `finally`; (3) the scan is fired as a bare fire-and-forget action from a `useEffect`, so its `revalidatePath` could be orphaned/swallowed and never refresh the client even after the DB recovered.
+
+**Fix:** (1) `scanReceiptForTransaction` now runs the image check **inside** the `try`, so every post-ownership failure path hits the `finally` and the row leaves `processing` (`src/actions/receipt.ts`). (2) `scanReceipt` wraps the call in a 60 s `AbortController` timeout, mapped to a friendly "timed out" error (`src/lib/receipt-scan.ts`). (3) `TransactionRow` self-heals: while `status === "processing"` it polls `router.refresh()` every 4 s, torn down the moment the status changes, so the UI catches up to the recovered DB regardless of the fire-and-forget revalidation. New tests cover the bad-image-still-recomputes path, the timeout→error mapping, and the processing poll (start/stop).
+
 ### ✅ FIXED — `createTransaction` no longer creates a default `'other'` product
 New transactions started with a single default product named `'other'` (cost = amount), inserted alongside the transaction inside a `BEGIN`/`COMMIT` block via a pooled client. Two `TO_FIX` items rode on that block: a `ROLLBACK`-in-`catch` that could mask the original error, and a category upsert that ran outside the client transaction (orphan-category-on-rollback).
 

@@ -11,13 +11,26 @@ Code: `src/lib/receipt-scan.ts` (`scanReceipt`) · `src/actions/receipt.ts`
    (not persisted).
 2. **Create** — on the create form a staged receipt starts the transaction as
    `processing` and returns its id; the scan then runs in the background (added
-   independently). In the products modal the transaction already exists.
+   independently). In the products modal, pressing Scan first clears the existing
+   products and marks the row `processing` (`startReceiptScan` — a new scan
+   *replaces* the old products), then runs the scan in the background; a row
+   already `processing` can't be re-scanned.
 3. **Scan** — `scanReceipt` sends the image to OpenAI with the prompt + schema,
    `JSON.parse`s the reply, validates it with `zod`, and maps it to product fields
-   (trim strings, keep only positive numbers, drop unnamed items).
+   (trim strings, keep only positive numbers, drop unnamed items). The HTTP call
+   is bounded by a **60 s `AbortController` timeout** (mapped to a friendly
+   "timed out" error) so a hung request can't leave the row stuck `processing`.
 4. **Attach** — the action inserts the products and recomputes status:
    `ready_to_verify` if product costs sum to `transaction.amount`, else
-   `unverified` (also `unverified` on scan failure — never stuck on `processing`).
+   `unverified`. The recompute + `revalidatePath` run in a `finally` that covers
+   **every** post-ownership failure path — scan error, timeout, *and a bad/missing
+   image* (the image check lives inside the `try`) — so an owned row the create
+   flow already marked `processing` is never left stuck there.
+
+On the client, `TransactionRow` also **self-heals**: while a row reads
+`processing` it polls `router.refresh()` (every 4 s, torn down the instant the
+status changes), so even if the fire-and-forget scan's `revalidatePath` never
+reaches this client, the UI catches up to the recovered DB status.
 
 `OPENAI_API_KEY` required (`OPENAI_MODEL` optional, default `gpt-4o-mini`).
 

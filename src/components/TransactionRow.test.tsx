@@ -16,6 +16,9 @@ vi.mock("@/actions/transactions", () => ({
   verifyTransaction,
 }));
 
+const { refresh } = vi.hoisted(() => ({ refresh: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
+
 import TransactionRow from "@/components/TransactionRow";
 
 const categories: Category[] = [
@@ -45,6 +48,7 @@ beforeEach(() => {
   updateTransaction.mockReset();
   deleteTransaction.mockReset();
   verifyTransaction.mockReset();
+  refresh.mockReset();
 });
 afterEach(() => vi.clearAllMocks());
 
@@ -60,6 +64,21 @@ describe("TransactionRow", () => {
     const row = desktopRow();
     expect(within(row).getByText("-12.50")).toBeInTheDocument();
     expect(within(row).getByText("Food")).toBeInTheDocument();
+  });
+
+  it("no longer has inline Edit or Verify buttons on the row", () => {
+    render(
+      <table>
+        <tbody>
+          <TransactionRow
+            tx={{ ...tx, status: "ready_to_verify" }}
+            categories={categories}
+          />
+        </tbody>
+      </table>,
+    );
+    expect(within(desktopRow()).queryByTitle("Edit")).not.toBeInTheDocument();
+    expect(within(desktopRow()).queryByTitle("Verify")).not.toBeInTheDocument();
   });
 
   it("requires a second click to confirm a delete", async () => {
@@ -88,8 +107,7 @@ describe("TransactionRow", () => {
     expect(fd.get("id")).toBe("42");
   });
 
-  it("edits a transaction and submits the changed fields", async () => {
-    updateTransaction.mockResolvedValue({ ok: true });
+  it("does not verify when the status is not ready_to_verify", async () => {
     render(
       <table>
         <tbody>
@@ -97,36 +115,54 @@ describe("TransactionRow", () => {
         </tbody>
       </table>,
     );
-    await userEvent.click(within(desktopRow()).getByTitle("Edit"));
-
-    // Save has a title only on the desktop row (mobile uses a text button),
-    // so it uniquely identifies the desktop editing <tr>.
-    const row = screen.getByTitle("Save").closest("tr") as HTMLElement;
-    const amount = within(row).getByDisplayValue("12.5");
-    await userEvent.clear(amount);
-    await userEvent.type(amount, "20");
-    await userEvent.click(within(row).getByTitle("Save"));
-
-    await waitFor(() => expect(updateTransaction).toHaveBeenCalledTimes(1));
-    const fd = updateTransaction.mock.calls[0][0] as FormData;
-    expect(fd.get("id")).toBe("42");
-    expect(fd.get("amount")).toBe("20");
-    expect(fd.get("category_id")).toBe("1");
-  });
-
-  it("disables the verify button unless the status is ready_to_verify", () => {
-    render(
-      <table>
-        <tbody>
-          <TransactionRow tx={tx} categories={categories} />
-        </tbody>
-      </table>,
-    );
-    expect(within(desktopRow()).getByTitle("Not ready to verify")).toBeDisabled();
+    // The 'unverified' badge is plain text, not a verify button.
+    expect(
+      within(desktopRow()).queryByRole("button", { name: "Unverified" }),
+    ).not.toBeInTheDocument();
     expect(verifyTransaction).not.toHaveBeenCalled();
   });
 
-  it("verifies a ready_to_verify transaction", async () => {
+  it("polls router.refresh while the row is processing (self-heal)", () => {
+    vi.useFakeTimers();
+    try {
+      render(
+        <table>
+          <tbody>
+            <TransactionRow
+              tx={{ ...tx, status: "processing" }}
+              categories={categories}
+            />
+          </tbody>
+        </table>,
+      );
+      expect(refresh).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(4000);
+      expect(refresh).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(4000);
+      expect(refresh).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not poll when the row is not processing", () => {
+    vi.useFakeTimers();
+    try {
+      render(
+        <table>
+          <tbody>
+            <TransactionRow tx={tx} categories={categories} />
+          </tbody>
+        </table>,
+      );
+      vi.advanceTimersByTime(12000);
+      expect(refresh).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("verifies a ready_to_verify transaction by clicking its status tag", async () => {
     verifyTransaction.mockResolvedValue({ ok: true });
     render(
       <table>
@@ -138,30 +174,12 @@ describe("TransactionRow", () => {
         </tbody>
       </table>,
     );
-    await userEvent.click(within(desktopRow()).getByTitle("Verify"));
+    await userEvent.click(
+      within(desktopRow()).getByRole("button", { name: "Ready to verify" }),
+    );
 
     await waitFor(() => expect(verifyTransaction).toHaveBeenCalledTimes(1));
     const fd = verifyTransaction.mock.calls[0][0] as FormData;
     expect(fd.get("id")).toBe("42");
-  });
-
-  it("shows the server error and stays editing on a failed update", async () => {
-    updateTransaction.mockResolvedValue({ ok: false, error: "Invalid category" });
-    render(
-      <table>
-        <tbody>
-          <TransactionRow tx={tx} categories={categories} />
-        </tbody>
-      </table>,
-    );
-    await userEvent.click(within(desktopRow()).getByTitle("Edit"));
-    const row = screen.getByTitle("Save").closest("tr") as HTMLElement;
-    await userEvent.click(within(row).getByTitle("Save"));
-
-    // The error renders in both the mobile card and the desktop row.
-    expect((await screen.findAllByText("Invalid category")).length).toBeGreaterThan(
-      0,
-    );
-    expect(updateTransaction).toHaveBeenCalledTimes(1);
   });
 });

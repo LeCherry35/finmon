@@ -36,9 +36,11 @@ export type ProductFields = {
   unit: string | null;
 };
 
-/** Costs are floats, so compare with a small tolerance rather than for exact
- *  equality. Mirrors the mismatch threshold used in the products UI. */
-const COST_EPSILON = 0.005;
+/** Product costs are treated as matching the transaction amount when they're
+ *  within this tolerance — a deliberately loose ±1 (currency units), so small
+ *  rounding / a missing minor line item still reads as "matches". Mirrors the
+ *  mismatch threshold used in the products UI. */
+const COST_TOLERANCE = 1;
 
 /** Recompute a transaction's status from its product line items: when the sum
  *  of product costs matches the transaction amount it becomes 'ready_to_verify',
@@ -57,7 +59,7 @@ export async function recomputeTransactionStatus(userId: string, transactionId: 
   if (rows.length === 0) return;
   const { amount, total } = rows[0];
   const status =
-    Math.abs(total - amount) <= COST_EPSILON ? "ready_to_verify" : "unverified";
+    Math.abs(total - amount) < COST_TOLERANCE ? "ready_to_verify" : "unverified";
   await pool.query(
     "UPDATE transactions SET status = $1 WHERE id = $2 AND user_id = $3",
     [status, transactionId, userId],

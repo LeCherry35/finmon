@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { formData, TEST_USER_ID } from "../../test/helpers";
 
-const { scanReceipt, insertProducts, recomputeTransactionStatus, userOwnsTransaction, revalidatePath } =
+const { query, scanReceipt, insertProducts, recomputeTransactionStatus, userOwnsTransaction, revalidatePath } =
   vi.hoisted(() => ({
+    query: vi.fn(),
     scanReceipt: vi.fn(),
     insertProducts: vi.fn(),
     recomputeTransactionStatus: vi.fn(),
@@ -10,17 +11,19 @@ const { scanReceipt, insertProducts, recomputeTransactionStatus, userOwnsTransac
     revalidatePath: vi.fn(),
   }));
 
+vi.mock("@/db", () => ({ pool: { query } }));
 vi.mock("@/lib/receipt-scan", () => ({ scanReceipt }));
 vi.mock("@/actions/products", () => ({ insertProducts, recomputeTransactionStatus }));
 vi.mock("@/db/queries", () => ({ userOwnsTransaction }));
 vi.mock("@/lib/dal", () => ({ requireUser: vi.fn(async () => ({ id: TEST_USER_ID })) }));
 vi.mock("next/cache", () => ({ revalidatePath }));
 
-import { scanReceiptForTransaction } from "@/actions/receipt";
+import { startReceiptScan, scanReceiptForTransaction } from "@/actions/receipt";
 
 const IMG = "data:image/jpeg;base64,AAAA";
 
 beforeEach(() => {
+  query.mockReset();
   scanReceipt.mockReset();
   insertProducts.mockReset();
   recomputeTransactionStatus.mockReset();
@@ -28,6 +31,50 @@ beforeEach(() => {
   revalidatePath.mockReset();
 });
 afterEach(() => vi.clearAllMocks());
+
+describe("startReceiptScan", () => {
+  it("marks the transaction processing, clears its products, and revalidates", async () => {
+    query
+      .mockResolvedValueOnce({ rowCount: 1 }) // guarded status update
+      .mockResolvedValueOnce({}); // delete products
+
+    const res = await startReceiptScan(formData({ transaction_id: "42" }));
+
+    expect(res).toEqual({ ok: true });
+    const [statusSql, statusParams] = query.mock.calls[0];
+    expect(statusSql).toMatch(/SET status = 'processing'/);
+    expect(statusSql).toMatch(/status <> 'processing'/); // guard
+    expect(statusParams).toEqual([42, TEST_USER_ID]);
+    const [delSql, delParams] = query.mock.calls[1];
+    expect(delSql).toMatch(/DELETE FROM products/);
+    expect(delParams).toEqual([42, TEST_USER_ID]);
+    expect(revalidatePath).toHaveBeenCalledWith("/transactions");
+  });
+
+  it("refuses to start when a scan is already in progress (guard no-op)", async () => {
+    query.mockResolvedValueOnce({ rowCount: 0 }); // already processing → no row updated
+
+    const res = await startReceiptScan(formData({ transaction_id: "42" }));
+
+    expect(res).toEqual({ ok: false, error: "A scan is already in progress" });
+    // did not delete products
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid id and an unowned transaction without touching the db", async () => {
+    expect(await startReceiptScan(formData({ transaction_id: "0" }))).toEqual({
+      ok: false,
+      error: "Invalid transaction",
+    });
+    userOwnsTransaction.mockResolvedValueOnce(false);
+    expect(await startReceiptScan(formData({ transaction_id: "42" }))).toEqual({
+      ok: false,
+      error: "Invalid transaction",
+    });
+    expect(query).not.toHaveBeenCalled();
+  });
+});
 
 describe("scanReceiptForTransaction", () => {
   it("scans, inserts the parsed products, recomputes status, and revalidates", async () => {
@@ -56,12 +103,16 @@ describe("scanReceiptForTransaction", () => {
     expect(scanReceipt).not.toHaveBeenCalled();
   });
 
-  it("rejects when the image is missing or not an image data URL", async () => {
+  it("rejects a bad image but still recomputes (clears 'processing') for an owned tx", async () => {
     const res = await scanReceiptForTransaction(
       formData({ transaction_id: "42", image: "data:text/plain;base64,AAAA" }),
     );
     expect(res).toEqual({ ok: false, error: "No receipt image provided" });
     expect(scanReceipt).not.toHaveBeenCalled();
+    // The create flow already marked the row 'processing'; a bad image must not
+    // leave it stuck there, so the recompute still runs in `finally`.
+    expect(recomputeTransactionStatus).toHaveBeenCalledWith(TEST_USER_ID, 42);
+    expect(revalidatePath).toHaveBeenCalledWith("/transactions");
   });
 
   it("rejects a transaction the user does not own", async () => {

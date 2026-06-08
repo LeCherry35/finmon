@@ -154,6 +154,14 @@ describe("scanReceipt", () => {
     await expect(scanReceipt("data:image/jpeg;base64,AAAA")).rejects.toThrow(/malformed/i);
   });
 
+  it("maps an aborted (timed-out) request to a friendly error", async () => {
+    const aborted = Object.assign(new Error("aborted"), { name: "AbortError" });
+    fetchMock.mockRejectedValueOnce(aborted);
+    await expect(scanReceipt("data:image/jpeg;base64,AAAA")).rejects.toThrow(
+      /timed out/i,
+    );
+  });
+
   it("rejects a response whose shape violates the schema", async () => {
     fetchMock.mockResolvedValueOnce(
       openaiResponse({ store: null, total: null, products: "nope" }),

@@ -23,7 +23,7 @@ components.
 | ✅ Server actions | `src/actions/{transactions,categories,plans,products,auth,receipt}.test.ts` | The `FormData` → validate → `pool.query` → `revalidatePath` contract: every validation-rejection branch, the success path, unique-violation handling, and `user_id` tenancy on every write. `transactions` pins the create-time row insert (`RETURNING id` → `lastTxId`, `has_receipt` → `processing`); `products` pins add/update/delete incl. tag parsing and ownership checks; `receipt` pins `scanReceiptForTransaction` — ownership, image validation, insert+recompute+revalidate, and the failure path that still clears `processing` |
 | ✅ DB queries (mocked) | `src/db/queries.test.ts` | Generated SQL + param array for each branch (category/month clauses, day-vs-month bucket, empty-month short-circuit), the `getTransactions` products-attach round-trip, and a sweep asserting every query is scoped by `user_id = $1` |
 | ✅ Middleware & auth gate | `src/proxy.test.ts`, `src/lib/dal.test.ts` | Every redirect branch of the route guard (protected/auth pages, `?stale` cookie clearing) and `requireUser` / `getCurrentUser` |
-| ✅ Components | `src/components/{CategoryRow,PlanRow,TransactionRow,TransactionCreateForm,TransactionCreateSheet,FilterPanel,ProductsModal}.test.tsx`, `charts/ChartTabs.test.tsx` | Edit/save/cancel state, two-click delete confirm, the verify button (disabled unless status is `ready_to_verify`; fires `verifyTransaction` with the row id when enabled), sheet open/auto-close on success, error display, filter/tab toggles producing the right URL params, the products modal (render/add/delete, total-mismatch hint, receipt scan + scan-error, close), and the create form's receipt flow (button flips to "Scan & add", `has_receipt` set, follow-up `scanReceiptForTransaction` fired against the new row) |
+| ✅ Components | `src/components/{CategoryRow,PlanRow,TransactionRow,TransactionCreateForm,TransactionCreateSheet,FilterPanel,ProductsModal}.test.tsx`, `charts/ChartTabs.test.tsx` | Edit/save/cancel state (CategoryRow/PlanRow inline, and the transaction's edit form which now lives in the products modal), two-click delete confirm, verifying a `ready_to_verify` transaction by clicking its status tag (fires `verifyTransaction` with the row id; a plain non-clickable label for any other status, with no inline Edit/Verify buttons left on the row), sheet open/auto-close on success, error display, filter/tab toggles producing the right URL params, the products modal (transaction edit, Show-products toggle, product render / add-via-collapsed-form / delete, the green/red product-total line, the two-phase receipt scan + start-error, close), and the create form's receipt flow (button flips to "Scan & add", `has_receipt` set, follow-up `scanReceiptForTransaction` fired against the new row) |
 
 These run with no infrastructure — `npm test` is enough.
 
@@ -51,12 +51,12 @@ carry `status`, but nothing pins the behaviour:
 
 - **`recomputeTransactionStatus`** in `src/actions/products.ts` — assert add/update/
   delete flip the transaction to `ready_to_verify` when product costs sum to
-  `amount` (within `COST_EPSILON`) and back to `unverified` otherwise, including
+  `amount` (within the loose `COST_TOLERANCE` of ±1) and back to `unverified` otherwise, including
   the `verified` → downgrade case.
 - **`StatusBadge`** in `src/components/TransactionRow.tsx` — label/colour per status
   and the unknown-status fallback to `unverified`.
 - **`verifyTransaction`** in `src/actions/transactions.ts` — the action itself is
-  untested (the `TransactionRow` test only pins the button → action call). Assert
+  untested (the `TransactionRow` test only pins the status-tag click → action call). Assert
   the guarded `ready_to_verify` → `verified` promotion, the `rowCount === 0`
   "not ready to verify" branch, invalid-id rejection, and `user_id` tenancy.
 

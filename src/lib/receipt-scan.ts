@@ -13,6 +13,9 @@ export type ScanResult = {
 
 const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 const DEFAULT_MODEL = "gpt-4o-mini";
+/** Hard ceiling on the OpenAI call. Without it a hung request would never reach
+ *  the caller's `finally`, leaving the transaction stuck on `processing`. */
+const REQUEST_TIMEOUT_MS = 60_000;
 
 const SYSTEM_PROMPT = `You are a receipt parser. You are given a photo of a store \
 receipt and must extract its line items as structured data. Rules:
@@ -112,50 +115,66 @@ export async function scanReceipt(imageDataUrl: string): Promise<ScanResult> {
   }
   const model = process.env.OPENAI_MODEL || DEFAULT_MODEL;
 
-  const res = await fetch(OPENAI_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        {
-          role: "user",
-          content: [
-            { type: "text", text: "Extract the line items from this receipt." },
-            { type: "image_url", image_url: { url: imageDataUrl } },
-          ],
-        },
-      ],
-      response_format: {
-        type: "json_schema",
-        json_schema: { name: "receipt", strict: true, schema: RESPONSE_SCHEMA },
-      },
-    }),
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`OpenAI request failed (${res.status}): ${body.slice(0, 500)}`);
-  }
-
-  const data = await res.json();
-  const content: unknown = data?.choices?.[0]?.message?.content;
-  if (typeof content !== "string") {
-    throw new Error("OpenAI returned no content");
-  }
-
-  let json: unknown;
+  let parsed: z.infer<typeof ResultSchema>;
   try {
-    json = JSON.parse(content);
-  } catch {
-    throw new Error("OpenAI returned malformed JSON");
-  }
+    const res = await fetch(OPENAI_URL, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "Extract the line items from this receipt." },
+              { type: "image_url", image_url: { url: imageDataUrl } },
+            ],
+          },
+        ],
+        response_format: {
+          type: "json_schema",
+          json_schema: { name: "receipt", strict: true, schema: RESPONSE_SCHEMA },
+        },
+      }),
+    });
 
-  const parsed = ResultSchema.parse(json);
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`OpenAI request failed (${res.status}): ${body.slice(0, 500)}`);
+    }
+
+    const data = await res.json();
+    const content: unknown = data?.choices?.[0]?.message?.content;
+    if (typeof content !== "string") {
+      throw new Error("OpenAI returned no content");
+    }
+
+    let json: unknown;
+    try {
+      json = JSON.parse(content);
+    } catch {
+      throw new Error("OpenAI returned malformed JSON");
+    }
+
+    parsed = ResultSchema.parse(json);
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(
+        `OpenAI request timed out after ${REQUEST_TIMEOUT_MS / 1000}s`,
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 
   const products: ProductFields[] = parsed.products
     .map((p) => ({
