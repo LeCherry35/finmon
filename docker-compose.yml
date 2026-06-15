@@ -15,7 +15,9 @@ services:
       POSTGRES_PASSWORD: ${SQL_DB_PASSWORD}
       POSTGRES_DB: ${SQL_DB_NAME}
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      # postgres:18+ stores data in a versioned subdir and wants the volume at
+      # /var/lib/postgresql (NOT .../data, which was the convention up to pg17).
+      - pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${SQL_DB_USER} -d ${SQL_DB_NAME}"]
       interval: 5s
