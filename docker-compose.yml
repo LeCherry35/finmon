@@ -1,0 +1,43 @@
+# Hetzner single-VPS deployment: Postgres + the Next.js app on a private network.
+# The app is built from this repo (`build: .`) and published on port 3000.
+# Postgres is NOT published to the host — it's only reachable by the app over the
+# internal `finmon` network, so there's nothing to firewall on 5432.
+#
+# Variable interpolation (${...}) and the app's env_file both read `.env` in this
+# directory. See .env.production.example for the template.
+
+services:
+  db:
+    image: postgres:18-alpine  # match the source RDS major version (dump is from pg 18)
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${SQL_DB_USER}
+      POSTGRES_PASSWORD: ${SQL_DB_PASSWORD}
+      POSTGRES_DB: ${SQL_DB_NAME}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${SQL_DB_USER} -d ${SQL_DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      # Override DB connection to point at the compose service over the private
+      # network, with TLS off (the link never leaves the Docker network).
+      NODE_ENV: production
+      SQL_DB_HOST: db
+      SQL_DB_PORT: "5432"
+      SQL_DB_SSL: "false"
+    ports:
+      - "3000:3000"
+
+volumes:
+  pgdata:

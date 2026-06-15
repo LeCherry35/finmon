@@ -3,6 +3,7 @@
 # SQLite database
 /data
 
+/backups
 # dependencies
 /node_modules
 /.pnp
