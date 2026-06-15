@@ -5,7 +5,7 @@ Two containers: the Next.js app and a **PostgreSQL** database on a private Docke
 network. The app is built from this repo on the server and served over plain HTTP
 on the server's public IP, port `3000`.
 
-> Migrating from the old AWS/ECS deploy? See **[Migrating data from AWS RDS](#migrating-data-from-aws-rds)**
+> Migrating from the old AWS/ECS deploy? See **[Restoring your existing data](#restoring-your-existing-data)**
 > below to bring your existing rows across. The AWS guide is preserved in git history.
 
 ## Infrastructure Overview
@@ -63,8 +63,8 @@ docker --version && docker compose version
 ### Step 3 — Clone the repo
 
 ```bash
-git clone <your-repo-url> /opt/finmon
-cd /opt/finmon
+git clone <your-repo-url> /root/opt/finmon
+cd /root/opt/finmon
 ```
 
 For a private repo, add a deploy key first or clone over HTTPS with a token.
@@ -102,7 +102,7 @@ the app. On first request the app runs all pending migrations in `src/db/migrati
 > **Fresh DB, no data import**: you'll register the first account through `/register`.
 > The `OWNER_*` env vars (see `src/db/CLAUDE.md`) are **not** needed here — they only
 > matter for a DB that has rows predating auth. If you're importing existing data,
-> follow [Migrating data from AWS RDS](#migrating-data-from-aws-rds) **before** the
+> follow [Restoring your existing data](#restoring-your-existing-data) **before** the
 > app's first run instead.
 
 ### Step 6 — Open the app
@@ -116,7 +116,7 @@ Browse to `http://<server-ip>:3000`. Register your account and you're live.
 From your machine, push changes to the repo. Then on the server:
 
 ```bash
-cd /opt/finmon
+cd /root/opt/finmon
 git pull
 docker compose up -d --build
 ```
@@ -126,24 +126,24 @@ its volume are untouched). New migrations run automatically on the next request.
 
 ### Optional convenience script
 
-Create `/opt/finmon/deploy.sh` on the server:
+Create `/root/opt/finmon/deploy.sh` on the server:
 
 ```bash
 #!/usr/bin/env bash
 set -e
-cd /opt/finmon
+cd /root/opt/finmon
 git pull
 docker compose up -d --build
 echo "Deployment complete."
 ```
 
 `chmod +x deploy.sh`, then deploy with `./deploy.sh`. To trigger it from your
-machine: `ssh root@<server-ip> '/opt/finmon/deploy.sh'`.
+machine: `ssh root@<server-ip> '/root/opt/finmon/deploy.sh'`.
 
 > **Schema migrations** — any new `.sql` file in `src/db/migrations/` runs
 > automatically on container start, each in its own transaction. If a migration
 > fails the app won't serve traffic until you fix it. Back up the DB before deploys
-> with destructive migrations (see [Backups](#backups-restore)).
+> with destructive migrations (see [Backups](#backups--restore)).
 
 ---
 
@@ -164,30 +164,35 @@ has a `user_id`).
 1. **Copy the dump to the server** (run from your machine, where the file exists):
 
    ```bash
-   scp backups/finmon-db-20260609-205059.sql root@<server-ip>:/opt/finmon/backups/
+   scp backups/finmon-db-20260609-205059.sql root@<server-ip>:/root/opt/finmon/backups/
    ```
 
-   (Create the folder first if needed: `ssh root@<server-ip> 'mkdir -p /opt/finmon/backups'`.)
+   (Create the folder first if needed: `ssh root@<server-ip> 'mkdir -p /root/opt/finmon/backups'`.)
 
 2. **Start only Postgres** and wait for it to report healthy:
 
    ```bash
-   cd /opt/finmon
+   cd /root/opt/finmon
    docker compose up -d db
    docker compose ps   # wait until db is "healthy"
    ```
 
 3. **Restore the plain-SQL dump** into the container's database (use `psql`, not
    `pg_restore` — this is a `.sql` file). The DB must be empty, which it is on a
-   first boot:
+   first boot. Load `.env` into your shell first so `$SQL_DB_USER` / `$SQL_DB_NAME`
+   are populated — the shell does **not** read `.env` automatically, and without this
+   psql falls back to the OS user and fails with `role "root" does not exist`:
 
    ```bash
+   set -a; source .env; set +a
    docker compose exec -T db psql -v ON_ERROR_STOP=1 \
      -U "$SQL_DB_USER" -d "$SQL_DB_NAME" \
      < backups/finmon-db-20260609-205059.sql
    ```
 
-   (`$SQL_DB_USER` / `$SQL_DB_NAME` must match your `.env`; or type the literals.)
+   (Or skip the `source` line and type your actual `.env` values into `-U` / `-d`.)
+   A clean restore prints `CREATE TABLE` / `COPY N` / `ALTER TABLE` lines and no
+   `ERROR:`.
 
 4. **Start the app** — it connects, sees migrations 001–006 already recorded, and
    applies 007–010:
@@ -215,7 +220,7 @@ Set in `.env` on the server (template: `.env.production.example`).
 | `SQL_DB_NAME` | yes | Postgres database name (created on first boot). |
 | `SQL_DB_USER` | yes | Postgres user. |
 | `SQL_DB_PASSWORD` | yes | Postgres password — use a long random value. |
-| `BETTER_AUTH_SECRET` | yes | Session-signing key (`openssl rand -base64 32`). The app **throws at startup** if unset while `NODE_ENV=production`. Keep it stable — rotating it invalidates all sessions. |
+| `BETTER_AUTH_SECRET` | yes | Session-signing key (`openssl rand -base64 32`). The app **throws at startup** if unset while `NODE_ENV=production`. Keep it stable — rotating it invalidates all sessions. (`next build` also imports the auth module, so the `Dockerfile` builder stage sets a throwaway placeholder to get past that guard — the real secret still comes from `.env` at runtime, and the placeholder never reaches the final image.) |
 | `BETTER_AUTH_URL` | recommended | Full origin, `http://<server-ip>:3000`. The server IP is stable, so set it. Better Auth infers it from the request if left unset. |
 | `OPENAI_API_KEY` | optional | Enables receipt scanning. Without it, scans return a friendly error and transactions work unchanged. |
 | `OPENAI_MODEL` | optional | Vision model, default `gpt-4o-mini`. |
@@ -233,7 +238,7 @@ rebuilds and `docker compose down`. It does **not** survive `docker compose down
 **Back up** (dump to a file on the host):
 
 ```bash
-cd /opt/finmon
+cd /root/opt/finmon
 docker compose exec -T db pg_dump --no-owner --no-acl -Fc \
   -U "$SQL_DB_USER" "$SQL_DB_NAME" > "finmon-$(date +%F).dump"
 ```
@@ -249,7 +254,7 @@ section above.
 ## Checking Logs & Status
 
 ```bash
-cd /opt/finmon
+cd /root/opt/finmon
 docker compose ps                 # container status / health
 docker compose logs -f app        # app logs (follow)
 docker compose logs -f db         # Postgres logs
