@@ -8,6 +8,12 @@ RUN npm ci
 
 FROM base AS builder
 WORKDIR /app
+# `next build` runs in production mode and imports the auth module while collecting                                 
+# page data; its top-level guard throws if BETTER_AUTH_SECRET is unset. The build                                   
+# never does real auth, so a throwaway value satisfies the guard. The real secret is                                
+# injected at runtime from .env in the separate `runner` stage — this placeholder                                   
+# does NOT leak into the final image.                                                                               
+ENV BETTER_AUTH_SECRET="build-time-placeholder-not-used-at-runtime" 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
