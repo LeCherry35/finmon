@@ -1,9 +1,10 @@
-# Hetzner Deployment Guide
+# DigitalOcean Deployment Guide
 
-This project is deployed on a single **Hetzner Cloud VPS** running **Docker Compose**.
-Two containers: the Next.js app and a **PostgreSQL** database on a private Docker
-network. The app is built from this repo on the server and served over plain HTTP
-on the server's public IP, port `3000`.
+This project is deployed on a single **DigitalOcean Droplet** running **Docker Compose**.
+Three containers: the Next.js app, a **PostgreSQL** database, and an **nginx** reverse
+proxy, on a private Docker network. The app is built from this repo on the server. nginx
+terminates TLS on `:443` and proxies to the app; **Cloudflare** sits in front, so the app
+is served over **HTTPS** at its domain (`https://finmon.uk`).
 
 > Migrating from the old AWS/ECS deploy? See **[Restoring your existing data](#restoring-your-existing-data)**
 > below to bring your existing rows across. The AWS guide is preserved in git history.
@@ -12,21 +13,25 @@ on the server's public IP, port `3000`.
 
 | Component | What | Notes |
 |---|---|---|
-| Host | Hetzner Cloud VPS | Ubuntu 24.04, e.g. `CX22` (2 vCPU / 4 GB) |
+| Host | DigitalOcean Droplet | Ubuntu 24.04, 2 vCPU / 4 GB comfortable for app + Postgres |
 | Orchestration | Docker Compose | `docker-compose.yml` in repo root |
-| App container | `app` service | Built from `Dockerfile`, published on `:3000` |
+| App container | `app` service | Built from `Dockerfile`, internal `:3000`, **not** published to the host |
 | Database | `db` service | `postgres:18-alpine`, data on the `pgdata` volume |
+| Reverse proxy | `nginx` service | Terminates TLS on `:443` (redirects `:80`), proxies to `app:3000` |
+| TLS / DNS | Cloudflare | Proxied DNS, SSL/TLS **Full (strict)**, Origin Certificate on nginx |
 | Source of truth | this git repo | Cloned onto the server; deploys are `git pull` + rebuild |
 
-The DB is **not** published to the host — only the app reaches it, over the private
-`finmon` network. Nothing listens on `5432` externally.
+Neither the app nor the DB is published to the host — only **nginx** is, on `80`/`443`.
+The app (`:3000`) and Postgres (`:5432`) are reachable only over the private Docker
+network. Nothing else listens externally.
 
 ---
 
 ## Prerequisites
 
-- A [Hetzner Cloud](https://www.hetzner.com/cloud) account and a project.
-- An SSH key uploaded to Hetzner (or added during server creation).
+- A [DigitalOcean](https://www.digitalocean.com/) account.
+- An SSH key uploaded to DigitalOcean (or added during droplet creation).
+- A domain managed by **Cloudflare** (DNS on Cloudflare nameservers).
 - The repo accessible from the server (public clone URL, or a deploy key for a private repo).
 - Values ready for: `BETTER_AUTH_SECRET` (`openssl rand -base64 32`), a strong DB
   password, and `OPENAI_API_KEY` (optional, for receipt scanning).
@@ -37,18 +42,18 @@ The DB is **not** published to the host — only the app reaches it, over the pr
 
 ### Step 1 — Create the server
 
-Hetzner Cloud Console → **Servers → Add Server**:
+DigitalOcean → **Create → Droplets**:
 
-- **Location**: closest to you.
+- **Region**: closest to you.
 - **Image**: Ubuntu 24.04.
-- **Type**: `CX22` (2 vCPU, 4 GB) is a comfortable starting point for app + Postgres.
-- **SSH key**: select your uploaded key.
-- **Firewall** (create/attach one): allow inbound **TCP 22** (SSH) and **TCP 3000**
-  (the app). Leave everything else closed — Postgres stays internal.
+- **Size**: 2 vCPU / 4 GB is a comfortable starting point for app + Postgres.
+- **Authentication**: select your SSH key.
 
-Note the server's **public IPv4** once it boots.
+Create a **Cloud Firewall** (Networking → Firewalls) and attach it to the droplet.
+Inbound rules: **TCP 22** (SSH), **TCP 80** (HTTP), **TCP 443** (HTTPS). Leave
+everything else closed — Postgres and the app stay internal (only nginx is exposed).
 
-> Prefer CLI? `hcloud server create --name finmon --type cx22 --image ubuntu-24.04 --ssh-key <key>`
+Note the droplet's **public IPv4** once it boots.
 
 ### Step 2 — Install Docker
 
@@ -83,13 +88,33 @@ Set at minimum:
 - `SQL_DB_NAME`, `SQL_DB_USER`, `SQL_DB_PASSWORD` — credentials for the Postgres
   container (any values you like; they're created on first boot).
 - `BETTER_AUTH_SECRET` — `openssl rand -base64 32`. **Required.** Keep it stable.
-- `BETTER_AUTH_URL` — `http://<server-ip>:3000`.
+- `BETTER_AUTH_URL` — `https://<your-domain>` (e.g. `https://finmon.uk`). Must match
+  the domain so secure cookies and redirects work.
 - `OPENAI_API_KEY` — optional, enables receipt scanning.
 
 The compose file sets `SQL_DB_HOST=db`, `SQL_DB_PORT=5432`, and `SQL_DB_SSL=false`
 for the app automatically — don't put those in `.env`.
 
-### Step 5 — Build and start
+### Step 5 — DNS, Cloudflare & TLS
+
+1. **DNS** — Cloudflare → your domain → **DNS**: add an **A** record `@` (and `www`)
+   pointing at the droplet's public IPv4, **Proxied** (orange cloud).
+2. **SSL/TLS mode** — Cloudflare → **SSL/TLS → Overview → Full (strict)**.
+3. **Origin Certificate** — Cloudflare → **SSL/TLS → Origin Server → Create
+   Certificate** (default RSA; hostnames `your-domain, *.your-domain`). Save the two
+   blocks on the server — `nginx/certs/` is gitignored, so it is **not** in the clone:
+
+   ```bash
+   mkdir -p /root/opt/finmon/nginx/certs
+   nano /root/opt/finmon/nginx/certs/origin.pem   # paste the Origin Certificate
+   nano /root/opt/finmon/nginx/certs/origin.key   # paste the Private Key
+   ```
+
+   nginx reads these via `nginx/conf.d/default.conf`. That file's `server_name` is set
+   to the project domain — if yours differs, update both `server_name` lines in the
+   repo and `git pull` on the server.
+
+### Step 6 — Build and start
 
 ```bash
 docker compose up -d --build
@@ -105,9 +130,9 @@ the app. On first request the app runs all pending migrations in `src/db/migrati
 > follow [Restoring your existing data](#restoring-your-existing-data) **before** the
 > app's first run instead.
 
-### Step 6 — Open the app
+### Step 7 — Open the app
 
-Browse to `http://<server-ip>:3000`. Register your account and you're live.
+Browse to `https://finmon.uk`. Register your account and you're live.
 
 ---
 
@@ -221,7 +246,7 @@ Set in `.env` on the server (template: `.env.production.example`).
 | `SQL_DB_USER` | yes | Postgres user. |
 | `SQL_DB_PASSWORD` | yes | Postgres password — use a long random value. |
 | `BETTER_AUTH_SECRET` | yes | Session-signing key (`openssl rand -base64 32`). The app **throws at startup** if unset while `NODE_ENV=production`. Keep it stable — rotating it invalidates all sessions. (`next build` also imports the auth module, so the `Dockerfile` builder stage sets a throwaway placeholder to get past that guard — the real secret still comes from `.env` at runtime, and the placeholder never reaches the final image.) |
-| `BETTER_AUTH_URL` | recommended | Full origin, `http://<server-ip>:3000`. The server IP is stable, so set it. Better Auth infers it from the request if left unset. |
+| `BETTER_AUTH_URL` | yes | Full HTTPS origin, `https://<your-domain>` (e.g. `https://finmon.uk`). Must match the domain so secure cookies and OAuth/redirects resolve correctly. |
 | `OPENAI_API_KEY` | optional | Enables receipt scanning. Without it, scans return a friendly error and transactions work unchanged. |
 | `OPENAI_MODEL` | optional | Vision model, default `gpt-4o-mini`. |
 
@@ -243,7 +268,7 @@ docker compose exec -T db pg_dump --no-owner --no-acl -Fc \
   -U "$SQL_DB_USER" "$SQL_DB_NAME" > "finmon-$(date +%F).dump"
 ```
 
-Copy the dump off the server (e.g. `scp` to your machine, or a Hetzner Storage Box).
+Copy the dump off the server (e.g. `scp` to your machine, or DigitalOcean Spaces).
 Take one before any destructive migration.
 
 **Restore** a dump into a running DB: same `pg_restore` command as in the migration
@@ -265,27 +290,16 @@ docker compose logs --tail=200 app
 
 ## Accessing the App
 
-`http://<server-ip>:3000` — the Hetzner VPS keeps a **stable public IP** (unlike the
-old ECS task), so the URL no longer changes between deploys.
+`https://finmon.uk` — served over HTTPS via Cloudflare + nginx. The droplet's public
+IP is not used directly; only nginx is exposed (ports `80`/`443`).
 
 ---
 
 ## Known Limitations & Deferred Work
 
-No load balancer or HTTPS yet — the app is served over plain HTTP on the raw IP, so
-sessions still rely on the non-secure-cookie workaround. The Hetzner move already
-resolved the unstable-IP issues from the AWS era.
+HTTPS is in place (Cloudflare + nginx) and session cookies are `Secure`
+(`useSecureCookies: true`). The remaining gap is email-based auth flows.
 
 | Limitation | Where | Why / current state | Resolved by |
 |---|---|---|---|
-| **No TLS / plain HTTP** | — | Browser ↔ server traffic is unencrypted on `:3000`. | Add a domain + a reverse proxy (**Caddy** gives automatic Let's Encrypt HTTPS), then point it at the app. |
-| **Insecure session cookies** | `src/lib/auth.ts` (`advanced.useSecureCookies: false`) | Over HTTP, a `Secure` cookie is dropped by the browser and login bounces back to `/login`. Forcing non-secure cookies keeps sessions working. | Front the app with HTTPS, then set `useSecureCookies: true` (or remove the override). |
 | **Email auth flows disabled** | `src/lib/auth.ts` (commented hooks), `src/lib/email.ts` | Email verification, password reset, and verification emails are commented out — sign-up has no verification gate and auto signs in. | Re-enable the commented Better Auth hooks once `RESEND_API_KEY` / `RESEND_FROM_EMAIL` are set. |
-
-### Optional next step — HTTPS with a domain
-
-Point a domain's `A` record at the server IP, open port `443` on the firewall, and add
-a Caddy container as a reverse proxy in front of the app — Caddy obtains and renews a
-Let's Encrypt cert automatically. Then set `BETTER_AUTH_URL=https://<domain>` and flip
-`useSecureCookies` to `true`. That's the single change that clears the remaining
-limitations above.

@@ -5,9 +5,9 @@ import { pool } from "@/db";
 // import { sendVerificationEmail, sendPasswordResetEmail } from "@/lib/email";
 
 // Fail loud rather than fall back to Better Auth's dev signing key in prod, which
-// would make session tokens forgeable. Note: BETTER_AUTH_URL is intentionally NOT
-// guarded — the prod task has no stable origin (the public IP changes every deploy),
-// so baseURL is left unset and Better Auth infers it from the request. See DEPLOY.md.
+// would make session tokens forgeable. BETTER_AUTH_URL is not throw-guarded, but in
+// prod it's expected to be the stable HTTPS origin (Cloudflare + nginx, e.g.
+// https://finmon.uk) and is passed straight to `baseURL` below. See DEPLOY.md.
 if (process.env.NODE_ENV === "production" && !process.env.BETTER_AUTH_SECRET) {
   throw new Error("BETTER_AUTH_SECRET must be set in production");
 }

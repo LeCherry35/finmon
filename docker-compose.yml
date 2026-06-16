@@ -1,7 +1,8 @@
-# Hetzner single-VPS deployment: Postgres + the Next.js app on a private network.
-# The app is built from this repo (`build: .`) and published on port 3000.
-# Postgres is NOT published to the host — it's only reachable by the app over the
-# internal `finmon` network, so there's nothing to firewall on 5432.
+# DigitalOcean single-Droplet deployment: nginx + the Next.js app + Postgres on a
+# private network. The app is built from this repo (`build: .`) but is NOT published
+# to the host — only nginx is (ports 80/443). Both the app (:3000) and Postgres
+# (:5432) are reachable only over the internal Docker network, so there's nothing to
+# firewall on those ports.
 #
 # Variable interpolation (${...}) and the app's env_file both read `.env` in this
 # directory. See .env.production.example for the template.

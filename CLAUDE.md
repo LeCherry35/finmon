@@ -8,7 +8,7 @@ Entities:
 - **Transaction** — `amount`, `type` (`income` | `spend`), `category_id`, `date` (`YYYY-MM-DD`), optional `note`.
 - **Plan** — `(category_id, month)` budget; one amount per category per `YYYY-MM`. Upsert on conflict.
 
-Pages: `/transactions` (default landing — list/CRUD), `/categories` (CRUD), `/plan` (current month: planned vs spent vs left, per category), `/expenditures` (spend totals by category, all-time), `/charts` (visualizations — currently a stacked-area expenditures-over-time chart, switchable via tabs as more chart types are added).
+Pages: `/transactions` (default landing — list/CRUD), `/categories` (CRUD), `/plan` (current month: planned vs spent vs left, per category), `/expenditures` (spend totals by category, all-time), `/charts` (visualizations — a stacked-area expenditures-over-time chart and a category-share donut, switchable via tabs as more chart types are added).
 
 ## Stack
 Next.js 16 (App Router), React 19, PostgreSQL via `pg`, Tailwind v4, TypeScript, Recharts (for `/charts` only). Email/password auth via Better Auth, with per-user multi-tenancy (every row scoped by `user_id`). Path alias `@/` → `src/`.
@@ -17,8 +17,8 @@ Next.js 16 (App Router), React 19, PostgreSQL via `pg`, Tailwind v4, TypeScript,
 Migrations, seed scripts, env vars, date-column shapes → `src/db/CLAUDE.md` (auto-loaded when working in `src/db/`).
 
 ## Deployment
-- Hetzner Cloud VPS, Docker Compose: app + self-hosted PostgreSQL containers on a private network (Postgres data on the `pgdata` volume). Built from the repo on the server; deploys are `git pull` + `docker compose up -d --build`.
-- Details in DEPLOY.md — including a **"Known Limitations & Deferred Work"** section that consolidates the current prod trade-offs (no HTTPS/TLS, non-secure cookies, disabled email auth). Check it before changing auth, cookies, or SSL config.
+- DigitalOcean Droplet, Docker Compose: app + self-hosted PostgreSQL + nginx reverse proxy on a private network (Postgres data on the `pgdata` volume). nginx terminates TLS on `:443` with Cloudflare in front, so the app is served over HTTPS at its domain; neither the app nor Postgres is published to the host. Built from the repo on the server; deploys are `git pull` + `docker compose up -d --build`.
+- Details in DEPLOY.md — including a **"Known Limitations & Deferred Work"** section that consolidates the current prod trade-offs (HTTPS + secure cookies are in place; email-based auth flows remain disabled). Check it before changing auth, cookies, or SSL config.
 
 ## Issue tracking
 Audit findings live in `TO_FIX.md`, grouped by severity (Critical / High / Medium / Low). When an issue is fixed, remove it from `TO_FIX.md` and move it to `FIXED.md` under the current date with a short **Fix:** note. The workflow is documented at the top of `TO_FIX.md`.

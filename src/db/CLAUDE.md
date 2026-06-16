@@ -6,7 +6,7 @@
 - `npm run db:seed:init` wipes the owner's three tables and seeds a deterministic 3-month dataset (8 categories, transactions across the last 90 days, plans for the current and 2 prior months). Idempotent — re-running yields byte-identical data. Requires `OWNER_USER_ID`.
 - `npm run db:seed:month -- <1-12>` appends 0–5 transactions per day for the given month of the current year, owned by `OWNER_USER_ID`. Additive; re-running duplicates rows by design.
 - `npm run db:hash-password '<password>'` prints a Better Auth password hash for use as `OWNER_PASSWORD_HASH`.
-- DB env vars: `SQL_DB_HOST`, `SQL_DB_PORT`, `SQL_DB_NAME`, `SQL_DB_USER`, `SQL_DB_PASSWORD`. SSL is on by default (`rejectUnauthorized: false` — encrypts but does not verify the server cert, which is what RDS needs without a bundled CA). Set `SQL_DB_SSL=false` to disable TLS for local Postgres.
+- DB env vars: `SQL_DB_HOST`, `SQL_DB_PORT`, `SQL_DB_NAME`, `SQL_DB_USER`, `SQL_DB_PASSWORD`. SSL is on by default (`rejectUnauthorized: false` — encrypts but does not verify the server cert, which suits a managed Postgres reached over TLS without a bundled CA). Set `SQL_DB_SSL=false` to disable TLS — which is what the prod compose deploy does (the app↔db link never leaves the private Docker network) and what local Postgres uses.
 - Auth env vars: `BETTER_AUTH_SECRET` (`openssl rand -base64 32`), `BETTER_AUTH_URL` (full origin, e.g. `http://localhost:3000`).
 - Email env vars: `RESEND_API_KEY` and `RESEND_FROM_EMAIL`. If `RESEND_API_KEY` is unset, verification/reset emails are logged to the server console (useful in dev).
 - Date columns are `TEXT` in ISO form: `transactions.date` = `YYYY-MM-DD`, `plans.month` = `YYYY-MM`. Filter by month with `LEFT(t.date, 7) = $month`.

@@ -62,14 +62,15 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ## Deployment
 
-Deployed on AWS (ECS Fargate + RDS PostgreSQL, image in ECR). Full redeploy
-steps, environment variables, and current production trade-offs are in
+Deployed on a DigitalOcean Droplet via Docker Compose (app + self-hosted
+PostgreSQL + nginx, fronted by Cloudflare for HTTPS). Full redeploy steps,
+environment variables, and current production trade-offs are in
 [`DEPLOY.md`](./DEPLOY.md).
 
 ## Documentation map
 
 - [`CLAUDE.md`](./CLAUDE.md) — project overview, entities, conventions.
-- [`DEPLOY.md`](./DEPLOY.md) — AWS deploy + "Known Limitations & Deferred Work".
+- [`DEPLOY.md`](./DEPLOY.md) — DigitalOcean deploy + "Known Limitations & Deferred Work".
 - [`TESTS.md`](./TESTS.md) / [`TESTS_COVERAGE.md`](./TESTS_COVERAGE.md) — how
   testing works and what's covered.
 - [`TO_FIX.md`](./TO_FIX.md) / [`FIXED.md`](./FIXED.md) — audit findings, open
