@@ -38,8 +38,19 @@ services:
       SQL_DB_HOST: db
       SQL_DB_PORT: "5432"
       SQL_DB_SSL: "false"
+    # No public port: the app is reachable only by nginx over the private network.
+
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    depends_on:
+      - app
     ports:
-      - "3000:3000"
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
 
 volumes:
   pgdata:
