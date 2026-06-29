@@ -4,9 +4,10 @@
 -- or brand can recur at different costs across transactions.
 --
 -- transactions.amount stays authoritative (Reading A): products are a breakdown,
--- nothing forces their costs to sum to amount. Every existing transaction is
--- backfilled with a single product named 'other' whose cost mirrors the amount,
--- and createTransaction applies the same default when no products are specified.
+-- nothing forces their costs to sum to amount. Every transaction that exists when
+-- this migration runs is backfilled (once) with a single product named 'other'
+-- whose cost mirrors the amount. New transactions created afterwards start with
+-- NO products — createTransaction does not add a default product.
 
 CREATE TABLE IF NOT EXISTS products (
   id             SERIAL PRIMARY KEY,

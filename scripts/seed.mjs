@@ -129,8 +129,9 @@ function splitAmount(rng, amount, n) {
 }
 
 function blankProduct(fields) {
+  // `name` is mandatory and always supplied by callers via `fields`; the rest
+  // default to null/empty.
   return {
-    name: "other",
     brand: null,
     cost: null,
     product_type: null,
