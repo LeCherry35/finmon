@@ -187,7 +187,7 @@ describe("scanReceipt system prompt", () => {
   async function systemPromptFromScan() {
     fetchMock.mockResolvedValueOnce(openaiResponse({ store: null, total: null, products: [] }));
     await scanReceipt("data:image/jpeg;base64,AAAA");
-    const body = JSON.parse(fetchMock.mock.calls.at(-1)[1].body);
+    const body = JSON.parse(fetchMock.mock.calls.at(-1)![1].body);
     return body.messages[0].content as string;
   }
 
