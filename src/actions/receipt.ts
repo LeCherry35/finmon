@@ -81,6 +81,14 @@ export async function scanReceiptForTransaction(
     await insertProducts(userId, transactionId, products);
     return { ok: true };
   } catch (err) {
+    // The create flow fires this action fire-and-forget (the client `void`s the
+    // result), so without logging here a failed scan is completely silent — the
+    // row just settles back on `unverified`. Log it so the cause is visible in
+    // the server logs (`docker compose logs app`).
+    console.error(
+      `Receipt scan failed for transaction ${transactionId}:`,
+      err instanceof Error ? err.stack ?? err.message : err,
+    );
     return {
       ok: false,
       error: err instanceof Error ? err.message : "Receipt scan failed",
