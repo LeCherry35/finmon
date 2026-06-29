@@ -186,7 +186,8 @@ Covered client components and what each test pins:
 |------|------|
 | `CategoryRow.test.tsx` | edit toggle, save `FormData` (id+name+priority), error-stays-editing, cancel reverts |
 | `PlanRow.test.tsx` | remaining = planned−spent, unplanned shows input directly, Save disabled until amount, upsert `FormData`, error |
-| `TransactionRow.test.tsx` | two-click delete confirm, edit→update `FormData`, error display |
+| `TransactionRow.test.tsx` | two-click delete confirm, verifying a `ready_to_verify` tx by clicking its status tag → `verifyTransaction`, and that the row carries no inline Edit/Verify buttons (both moved to the modal / the status tag) |
+| `ProductsModal.test.tsx` | the **Show products** toggle gates the product list, transaction edit → `updateTransaction` `FormData`, add-product via the collapsed "Add product" form, two-click product delete, the green/red product-total line, the two-phase receipt scan (start awaited, vision scan deferred until the row re-renders `processing`) + start-error, close |
 | `TransactionCreateSheet.test.tsx` | FAB open / Escape / Close, **auto-close on `successCount` bump**, error keeps it open, datalist options |
 | `ChartTabs.test.tsx` | sets/clears `?chart=`, preserves other params, no-op on active tab |
 | `FilterPanel.test.tsx` | open dropdown, month/category toggle → URL params, "all but one" collapse, Clear all, `showCategoryFilter` |
@@ -200,9 +201,10 @@ Conventions / gotchas learned here:
 - **Row components must be rendered inside a `<table><tbody>`** or React warns —
   helper-wrap them.
 - **Mobile + desktop render simultaneously** under jsdom (no CSS media queries),
-  so list rows emit *two* copies of most text/inputs. Disambiguate by a
-  desktop-only handle (e.g. `getByTitle("Save")` — the mobile card uses text
-  buttons) or `findAllByText`. `TransactionRow` leans on this.
+  so list rows emit *two* copies of most text/inputs. Disambiguate by scoping to
+  the row you want (`TransactionRow.test.tsx` uses a `desktopRow()` helper that
+  grabs the `hidden md:table-row` `<tr>` via its date cell, then queries
+  `within(...)` it) or by `findAllByText`.
 - **`useActionState` is driven by a real form submit**: fill required inputs and
   click submit; jsdom enforces `min`/`required`, so a value that violates them
   silently blocks the submit and the action never runs (use a valid value and

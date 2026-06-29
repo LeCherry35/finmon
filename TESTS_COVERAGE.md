@@ -3,7 +3,7 @@
 What finmon's tests cover today, and what's still planned. For *how* the tests
 work — stack, mocking seams, fixtures, gotchas — see [`TESTS.md`](./TESTS.md).
 
-**Where we are:** **152 tests + 1 `todo`** across 18 files, all green. Every
+**Where we are:** **217 tests + 1 `todo`** across 23 files, all green. Every
 layer below the UI is unit-tested; the gaps left are a real-Postgres tier, full
 end-to-end flows, and the CI gate.
 
@@ -19,11 +19,11 @@ components.
 
 | Layer | Files | What the tests pin |
 |-------|-------|--------------------|
-| ✅ Pure logic | `src/lib/{filters,charts,chartData,email}.test.ts`, `src/components/charts/registry.test.ts` | Filter parsing & URL round-trips, chart bucketing / date math (clock pinned), Recharts pivot, email templating & HTML-escaping, chart/nav registry integrity |
-| ✅ Server actions | `src/actions/{transactions,categories,plans,auth}.test.ts` | The `FormData` → validate → `pool.query` → `revalidatePath` contract: every validation-rejection branch, the success path, unique-violation handling, and `user_id` tenancy on every write |
-| ✅ DB queries (mocked) | `src/db/queries.test.ts` | Generated SQL + param array for each branch (category/month clauses, day-vs-month bucket, empty-month short-circuit) and a sweep asserting every query is scoped by `user_id = $1` |
+| ✅ Pure logic | `src/lib/{filters,charts,chartData,email,receipt-scan}.test.ts`, `src/components/charts/registry.test.ts` | Filter parsing & URL round-trips, chart bucketing / date math (clock pinned), Recharts pivot, email templating & HTML-escaping, chart/nav registry integrity, and the receipt scanner (OpenAI request shape, json_schema strict mode, mapping line items → product fields, dropping non-positive/unnamed items and the manual-only `description`, missing-key / non-OK / malformed-JSON / bad-shape errors — `fetch` stubbed; plus system-prompt composition: `{{UNITS}}`/`{{EXAMPLES}}` substitution from `receipt-units.json`/`receipt-examples.json`, no `note` leak, the read-once cache, and a missing `receipt-prompt.md` surfacing at scan time rather than on import) |
+| ✅ Server actions | `src/actions/{transactions,categories,plans,products,auth,receipt}.test.ts` | The `FormData` → validate → `pool.query` → `revalidatePath` contract: every validation-rejection branch, the success path, unique-violation handling, and `user_id` tenancy on every write. `transactions` pins the create-time row insert (`RETURNING id` → `lastTxId`, `has_receipt` → `processing`); `products` pins add/update/delete incl. tag parsing and ownership checks; `receipt` pins `scanReceiptForTransaction` — ownership, image validation, insert+recompute+revalidate, and the failure path that still clears `processing` |
+| ✅ DB queries (mocked) | `src/db/queries.test.ts` | Generated SQL + param array for each branch (category/month clauses, day-vs-month bucket, empty-month short-circuit), the `getTransactions` products-attach round-trip, and a sweep asserting every query is scoped by `user_id = $1` |
 | ✅ Middleware & auth gate | `src/proxy.test.ts`, `src/lib/dal.test.ts` | Every redirect branch of the route guard (protected/auth pages, `?stale` cookie clearing) and `requireUser` / `getCurrentUser` |
-| ✅ Components | `src/components/{CategoryRow,PlanRow,TransactionRow,TransactionCreateSheet,FilterPanel}.test.tsx`, `charts/ChartTabs.test.tsx` | Edit/save/cancel state, two-click delete confirm, sheet open/auto-close on success, error display, and filter/tab toggles producing the right URL params |
+| ✅ Components | `src/components/{CategoryRow,PlanRow,TransactionRow,TransactionCreateForm,TransactionCreateSheet,FilterPanel,ProductsModal}.test.tsx`, `charts/ChartTabs.test.tsx` | Edit/save/cancel state (CategoryRow/PlanRow inline, and the transaction's edit form which now lives in the products modal), two-click delete confirm, verifying a `ready_to_verify` transaction by clicking its status tag (fires `verifyTransaction` with the row id; a plain non-clickable label for any other status, with no inline Edit/Verify buttons left on the row), sheet open/auto-close on success, error display, filter/tab toggles producing the right URL params, the products modal (transaction edit, Show-products toggle, product render / add-via-collapsed-form / delete, the green/red product-total line, the two-phase receipt scan + start-error, close), and the create form's receipt flow (button flips to "Scan & add", `has_receipt` set, follow-up `scanReceiptForTransaction` fired against the new row) |
 
 These run with no infrastructure — `npm test` is enough.
 
@@ -43,6 +43,24 @@ verify the things only a live DB proves:
   totals, month filtering (`LEFT(date,7)`), and ordering.
 
 Highest value for the aggregation queries; medium effort.
+
+### ☐ Transaction status workflow
+
+The `status` field (migration 009) shipped without tests. Fixtures were updated to
+carry `status`, but nothing pins the behaviour:
+
+- **`recomputeTransactionStatus`** in `src/actions/products.ts` — assert add/update/
+  delete flip the transaction to `ready_to_verify` when product costs sum to
+  `amount` (within the loose `COST_TOLERANCE` of ±1) and back to `unverified` otherwise, including
+  the `verified` → downgrade case.
+- **`StatusBadge`** in `src/components/TransactionRow.tsx` — label/colour per status
+  and the unknown-status fallback to `unverified`.
+- **`verifyTransaction`** in `src/actions/transactions.ts` — the action itself is
+  untested (the `TransactionRow` test only pins the status-tag click → action call). Assert
+  the guarded `ready_to_verify` → `verified` promotion, the `rowCount === 0`
+  "not ready to verify" branch, invalid-id rejection, and `user_id` tenancy.
+
+All fit the existing mocked-action / component tiers; low effort.
 
 ### ☐ End-to-end (Playwright)
 

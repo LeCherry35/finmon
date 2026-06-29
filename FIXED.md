@@ -1,4 +1,36 @@
 
+09.06.2026
+### ✅ FIXED — Status didn't change when a transaction's amount was manually edited
+`updateTransaction` (`src/actions/transactions.ts`) wrote a new `amount` but never re-derived `status` from the product line items. So editing the total left the row's status stale: a transaction whose products still summed to the *old* amount stayed `ready_to_verify`/`verified` after the amount moved away from that sum, and conversely editing the amount to match existing product costs never promoted the row to `ready_to_verify`.
+
+**Fix:** `updateTransaction` now captures the previous amount in the same round-trip (a `WITH prev AS (…)` CTE returning `prev.amount`) and calls `recomputeTransactionStatus(userId, id)` — but only when the amount actually changed, so editing an unrelated field (note/date/category) never downgrades a `verified` row. The recompute reuses the existing helper exported from `products.ts`. New tests in `transactions.test.ts` cover the recompute-on-amount-change and no-recompute-when-unchanged paths.
+
+08.06.2026
+### ✅ FIXED — Receipt scan could leave a transaction stuck on `processing` forever
+A transaction added with a receipt is created `processing`; the only thing that clears it is `scanReceiptForTransaction`'s `finally` (recompute status + `revalidatePath`). Three holes meant a row could sit on `processing` indefinitely: (1) the image-format and ownership checks `return`ed **before** the `try`, so a bad/missing image skipped the `finally` recompute entirely; (2) `scanReceipt`'s OpenAI `fetch` had **no timeout**, so a hung request never reached the `finally`; (3) the scan is fired as a bare fire-and-forget action from a `useEffect`, so its `revalidatePath` could be orphaned/swallowed and never refresh the client even after the DB recovered.
+
+**Fix:** (1) `scanReceiptForTransaction` now runs the image check **inside** the `try`, so every post-ownership failure path hits the `finally` and the row leaves `processing` (`src/actions/receipt.ts`). (2) `scanReceipt` wraps the call in a 60 s `AbortController` timeout, mapped to a friendly "timed out" error (`src/lib/receipt-scan.ts`). (3) `TransactionRow` self-heals: while `status === "processing"` it polls `router.refresh()` every 4 s, torn down the moment the status changes, so the UI catches up to the recovered DB regardless of the fire-and-forget revalidation. New tests cover the bad-image-still-recomputes path, the timeout→error mapping, and the processing poll (start/stop).
+
+### ✅ FIXED — `createTransaction` no longer creates a default `'other'` product
+New transactions started with a single default product named `'other'` (cost = amount), inserted alongside the transaction inside a `BEGIN`/`COMMIT` block via a pooled client. Two `TO_FIX` items rode on that block: a `ROLLBACK`-in-`catch` that could mask the original error, and a category upsert that ran outside the client transaction (orphan-category-on-rollback).
+
+**Fix:** Transactions now start with **no products** (the user adds them via the products modal). `createTransaction` is a single `pool.query` insert — no client transaction, no default product — which also dissolves both dependent `TO_FIX` items. The seed script's `backfillOtherProducts` was removed for the same reason, so seeded data matches what the app produces. Legacy `'other'` rows from migration 007's backfill are left in place (harmless; nothing depends on them). Tests in `transactions.test.ts` updated to assert the two-query flow and the absence of a product insert.
+
+### ✅ FIXED — Product edit form showed stale values when re-opened after a save
+`src/components/ProductsModal.tsx` `ProductItem` initialized `form` once via `useState(() => toForm(product))`. After a save + `revalidatePath`, the fresh `product` prop updated the read-only view but `form` was never re-synced, so re-opening Edit showed the pre-save text (e.g. a value the server had trimmed).
+
+**Fix:** The Edit button's `onClick` now calls `setForm(toForm(product))` before `setEditing(true)`, so the form is re-seeded from the current prop on every edit. Covered by the existing `ProductsModal.test.tsx` suite.
+
+### ✅ FIXED — `getProductsForTransaction` was dead code
+`src/db/queries.ts` exported `getProductsForTransaction`, but nothing called it — `getTransactions` attaches products inline via a batched `transaction_id = ANY(...)` query. The orphan invited a future per-row caller to reintroduce N+1.
+
+**Fix:** Removed the unused function. The `Product` type import stays (still used by `getTransactions`'s attach). No callers existed, so no other change was needed.
+
+### ✅ FIXED — `createTransaction` test dropped its exact call-count assertion
+`src/actions/transactions.test.ts` no longer asserted the total number of `query` calls (the pre-rewrite test pinned `toHaveBeenCalledTimes(2)`); it only checked specific call indices, so a dropped `BEGIN`/default-product `INSERT` or a spurious query could pass unnoticed.
+
+**Fix:** Re-added `expect(query).toHaveBeenCalledTimes(5)` to the success path (category upsert + BEGIN + transaction INSERT + product INSERT + COMMIT).
+
 01.06.2026
 ### ✅ FIXED — Expenditures-over-time chart allowed non-adjacent month selection
 The chart's x-axis is built from `generateBuckets(months, …)`, which only emits buckets for the selected months. A non-adjacent selection (e.g. Jan + Mar, Feb deselected) skipped Feb entirely, so the stacked-area "over time" chart stitched Jan straight to Mar and misrepresented the timeline.

@@ -1,12 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { formData, TEST_USER_ID } from "../../test/helpers";
 
-const { query, revalidatePath } = vi.hoisted(() => ({
+// `query` backs both pool.query and the pooled client's query, so call order
+// across pool + client is a single sequence on this one mock.
+const { query, release, revalidatePath } = vi.hoisted(() => ({
   query: vi.fn(),
+  release: vi.fn(),
   revalidatePath: vi.fn(),
 }));
 
-vi.mock("@/db", () => ({ pool: { query } }));
+vi.mock("@/db", () => ({
+  pool: { query, connect: vi.fn(async () => ({ query, release })) },
+}));
 vi.mock("@/lib/dal", () => ({
   requireUser: vi.fn(async () => ({ id: "user-1" })),
 }));
@@ -20,6 +25,7 @@ import {
 
 beforeEach(() => {
   query.mockReset();
+  release.mockReset();
   revalidatePath.mockReset();
 });
 afterEach(() => vi.clearAllMocks());
@@ -40,10 +46,10 @@ describe("createTransaction", () => {
     expect(query).not.toHaveBeenCalled();
   });
 
-  it("upserts the category, inserts the row, and revalidates on success", async () => {
+  it("upserts the category, inserts the row with no products, and revalidates on success", async () => {
     query
       .mockResolvedValueOnce({ rows: [{ id: 7 }] }) // category upsert
-      .mockResolvedValueOnce({}); // transaction insert
+      .mockResolvedValueOnce({ rows: [{ id: 42 }] }); // transaction insert (RETURNING id)
 
     const result = await createTransaction(
       prev,
@@ -53,32 +59,57 @@ describe("createTransaction", () => {
         category_name: " Food ",
         date: "2026-06-01",
         note: "lunch",
+        store: "Tesco",
       }),
     );
 
-    expect(result).toEqual({ successCount: 3 });
+    // returns the new transaction id so the create UI can fire a receipt scan
+    expect(result).toEqual({ successCount: 3, lastTxId: 42 });
+    // exactly: category upsert + transaction INSERT (no default product anymore)
     expect(query).toHaveBeenCalledTimes(2);
     // category upsert: trimmed name + user id
     expect(query.mock.calls[0][1]).toEqual(["Food", TEST_USER_ID]);
-    // insert: amount, type, category_id, date, note, user id
-    expect(query.mock.calls[1][1]).toEqual([
-      12.5,
-      "spend",
-      7,
-      "2026-06-01",
-      "lunch",
-      TEST_USER_ID,
-    ]);
+    // transaction insert: amount, type, category_id, date, note, store, status, user id
+    const [txSql, txParams] = query.mock.calls[1];
+    expect(txSql).toMatch(/INSERT INTO transactions/);
+    expect(txSql).toMatch(/RETURNING id/);
+    expect(txParams).toEqual([12.5, "spend", 7, "2026-06-01", "lunch", "Tesco", "unverified", TEST_USER_ID]);
+    // no product insert
+    expect(query.mock.calls.some(([sql]) => /INSERT INTO products/.test(sql))).toBe(false);
     expect(revalidatePath).toHaveBeenCalledWith("/transactions");
     expect(revalidatePath).toHaveBeenCalledWith("/categories");
   });
 
+  it("starts the row as 'processing' when a receipt is staged (has_receipt)", async () => {
+    query
+      .mockResolvedValueOnce({ rows: [{ id: 7 }] }) // category upsert
+      .mockResolvedValueOnce({ rows: [{ id: 99 }] }); // transaction insert
+
+    const result = await createTransaction(
+      prev,
+      formData({
+        amount: "30",
+        type: "spend",
+        category_name: "Food",
+        date: "2026-06-01",
+        has_receipt: "1",
+      }),
+    );
+
+    expect(result).toEqual({ successCount: 3, lastTxId: 99 });
+    // status param (index 6) is 'processing' until the scan attaches products
+    expect(query.mock.calls[1][1][6]).toBe("processing");
+  });
+
   it("stores an empty note as null", async () => {
-    query.mockResolvedValueOnce({ rows: [{ id: 1 }] }).mockResolvedValueOnce({});
+    query
+      .mockResolvedValueOnce({ rows: [{ id: 1 }] }) // category upsert
+      .mockResolvedValueOnce({ rows: [{ id: 2 }] }); // transaction insert
     await createTransaction(
       prev,
       formData({ amount: "5", type: "income", category_name: "Pay", date: "2026-06-01" }),
     );
+    // transaction insert is the 2nd query call; note is param index 4
     expect(query.mock.calls[1][1][4]).toBeNull();
   });
 });
@@ -115,13 +146,36 @@ describe("updateTransaction", () => {
   it("updates scoped by user id on success", async () => {
     query
       .mockResolvedValueOnce({ rowCount: 1 }) // ownership check
-      .mockResolvedValueOnce({}); // update
+      .mockResolvedValueOnce({ rows: [{ prev_amount: "10.00" }] }); // update (amount unchanged)
     const result = await updateTransaction(formData(valid));
     expect(result).toEqual({ ok: true });
     const [sql, params] = query.mock.calls[1];
-    expect(sql).toMatch(/WHERE id = \$6 AND user_id = \$7/);
-    expect(params).toEqual([10, "spend", 3, "2026-06-01", null, 5, TEST_USER_ID]);
+    expect(sql).toMatch(/WHERE t\.id = \$7 AND t\.user_id = \$8/);
+    expect(params).toEqual([10, "spend", 3, "2026-06-01", null, null, 5, TEST_USER_ID]);
     expect(revalidatePath).toHaveBeenCalledWith("/transactions");
+  });
+
+  it("recomputes status when the amount changed", async () => {
+    query
+      .mockResolvedValueOnce({ rowCount: 1 }) // ownership check
+      .mockResolvedValueOnce({ rows: [{ prev_amount: "10.00" }] }) // update (amount moved 10 -> 25)
+      .mockResolvedValueOnce({ rows: [{ amount: 25, total: 25 }] }) // recompute SELECT
+      .mockResolvedValueOnce({}); // recompute UPDATE
+    const result = await updateTransaction(formData({ ...valid, amount: "25" }));
+    expect(result).toEqual({ ok: true });
+    // ownership + update + recompute (SELECT + UPDATE) = 4 calls
+    expect(query).toHaveBeenCalledTimes(4);
+    expect(query.mock.calls[2][0]).toMatch(/COALESCE\(SUM\(p\.cost\), 0\)/);
+  });
+
+  it("does not recompute status when the amount is unchanged", async () => {
+    query
+      .mockResolvedValueOnce({ rowCount: 1 }) // ownership check
+      .mockResolvedValueOnce({ rows: [{ prev_amount: "10.00" }] }); // update (amount stays 10)
+    const result = await updateTransaction(formData(valid));
+    expect(result).toEqual({ ok: true });
+    // ownership + update only — no recompute
+    expect(query).toHaveBeenCalledTimes(2);
   });
 });
 

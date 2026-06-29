@@ -3,6 +3,8 @@
 import { useActionState, useEffect, useState } from "react";
 import { createTransaction } from "@/actions/transactions";
 import type { Category } from "@/actions/categories";
+import ReceiptUpload from "@/components/ReceiptUpload";
+import { useReceiptScanCreate } from "@/components/useReceiptScanCreate";
 
 export default function TransactionCreateSheet({
   categories,
@@ -15,6 +17,7 @@ export default function TransactionCreateSheet({
   const [state, formAction, pending] = useActionState(createTransaction, {
     successCount: 0,
   });
+  const { receipt, setReceipt } = useReceiptScanCreate(state);
   const [lastSeenSuccess, setLastSeenSuccess] = useState(0);
 
   if (state.successCount !== lastSeenSuccess) {
@@ -125,6 +128,13 @@ export default function TransactionCreateSheet({
                   className={inputCls}
                 />
               </Field>
+              <Field label="Store">
+                <input
+                  name="store"
+                  placeholder="Optional"
+                  className={inputCls}
+                />
+              </Field>
               <Field label="Note">
                 <input
                   name="note"
@@ -132,6 +142,14 @@ export default function TransactionCreateSheet({
                   className={inputCls}
                 />
               </Field>
+              <Field label="Receipt">
+                <ReceiptUpload
+                  value={receipt}
+                  onChange={setReceipt}
+                  disabled={pending}
+                />
+              </Field>
+              <input type="hidden" name="has_receipt" value={receipt ? "1" : ""} />
               {state.error && (
                 <p className="text-sm text-red-600">{state.error}</p>
               )}
@@ -140,7 +158,11 @@ export default function TransactionCreateSheet({
                 disabled={pending}
                 className="w-full bg-zinc-900 text-white text-base font-medium px-4 py-3 rounded-lg hover:bg-zinc-700 disabled:opacity-50"
               >
-                {pending ? "Adding…" : "Add transaction"}
+                {pending
+                  ? "Adding…"
+                  : receipt
+                    ? "Scan & add transaction"
+                    : "Add transaction"}
               </button>
             </form>
           </div>

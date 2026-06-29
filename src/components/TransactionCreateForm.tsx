@@ -3,6 +3,8 @@
 import { useActionState } from "react";
 import { createTransaction } from "@/actions/transactions";
 import type { Category } from "@/actions/categories";
+import ReceiptUpload from "@/components/ReceiptUpload";
+import { useReceiptScanCreate } from "@/components/useReceiptScanCreate";
 
 export default function TransactionCreateForm({
   categories,
@@ -14,6 +16,7 @@ export default function TransactionCreateForm({
   const [state, formAction, pending] = useActionState(createTransaction, {
     successCount: 0,
   });
+  const { receipt, setReceipt } = useReceiptScanCreate(state);
 
   const inputCls =
     "border border-zinc-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-zinc-400";
@@ -60,16 +63,25 @@ export default function TransactionCreateForm({
       </div>
       <div className="flex gap-3">
         <input
+          name="store"
+          placeholder="Store (optional)"
+          className={`flex-1 ${inputCls}`}
+        />
+        <input
           name="note"
           placeholder="Note (optional)"
           className={`flex-1 ${inputCls}`}
         />
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <ReceiptUpload value={receipt} onChange={setReceipt} disabled={pending} />
+        <input type="hidden" name="has_receipt" value={receipt ? "1" : ""} />
         <button
           type="submit"
           disabled={pending}
-          className="bg-zinc-800 text-white text-sm px-4 py-2 rounded hover:bg-zinc-700 disabled:opacity-50"
+          className="shrink-0 bg-zinc-800 text-white text-sm px-4 py-2 rounded hover:bg-zinc-700 disabled:opacity-50"
         >
-          Add
+          {receipt ? "Scan & add" : "Add"}
         </button>
       </div>
       {state.error && <p className="text-sm text-red-600">{state.error}</p>}

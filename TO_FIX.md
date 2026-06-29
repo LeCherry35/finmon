@@ -18,6 +18,10 @@ Audit findings, ordered by severity.
 
 ## High — functional bugs in normal use
 
+### Process discounts
+the discount may be tied to product or to transaction
+
+### Store name and total are parsed from check but dont affect anything
 ---
 
 ## Medium — UX / robustness
@@ -38,7 +42,10 @@ A new user lands on `/transactions` with zero categories. The desktop inline for
 `src/actions/transactions.ts:94-99` reads `id = Number(formData.get("id"))` and runs `DELETE … WHERE id = $1 AND user_id = $2` without checking `!Number.isFinite(id) || id <= 0`. Compare to `updateTransaction:75` which validates. Also returns implicit `void` while sibling actions return `ActionResult`. Today the form always sends a valid id, so it's latent — but inconsistent with the rest of the file.
 
 ### Migration runner has no advisory lock — concurrent startup can race
-`src/instrumentation.ts:36-54` checks `_migrations`, then applies each pending file. If more than one container/task boots concurrently against the same database (rolling deploy or scaling to >1 task), two runners can both see a migration as not-done and race to apply it. Most statements are `IF NOT EXISTS`-safe, but `ALTER … ADD CONSTRAINT` (e.g. migration 006) and the `INSERT INTO _migrations (name)` PK are not — the loser's transaction rolls back and that task crashes at startup. Latent today because prod runs a single ephemeral task (see `DEPLOY.md`), but it becomes real the moment the deploy fans out. Fix: take a `pg_advisory_xact_lock(<const>)` (or session-level `pg_advisory_lock`) before the apply loop so runners serialize.
+`src/instrumentation-node.ts` (`migrate()`, invoked from `src/instrumentation.ts`'s `register()`) checks `_migrations`, then applies each pending file. If more than one container/task boots concurrently against the same database (rolling deploy or scaling to >1 task), two runners can both see a migration as not-done and race to apply it. Most statements are `IF NOT EXISTS`-safe, but `ALTER … ADD CONSTRAINT` (e.g. migration 006) and the `INSERT INTO _migrations (name)` PK are not — the loser's transaction rolls back and that task crashes at startup. Latent today because prod runs a single ephemeral task (see `DEPLOY.md`), but it becomes real the moment the deploy fans out. Fix: take a `pg_advisory_xact_lock(<const>)` (or session-level `pg_advisory_lock`) before the apply loop so runners serialize.
+
+### `deleteProduct` can leave a transaction with zero products
+`src/actions/products.ts` `deleteProduct` removes any product the user owns with no guard against deleting the last one, so a transaction can end up with `products = []`. This does not crash — the empty state is handled (`ProductsModal.tsx:104`, `?? []`) and `transactions.amount` stays authoritative (Reading A: products are an optional breakdown) — so it may be intended. Decision needed: either accept zero-product transactions as valid, or block deleting the final product (and/or fall back to recreating a default `other`). Document whichever is chosen.
 
 ---
 
@@ -55,4 +62,7 @@ Server actions validate `YYYY-MM-DD` / `YYYY-MM` with regex, so today the only w
 
 ### `.env example` filename has a literal space
 Should be `.env.example`. Trivial.
+
+### Products attach uses `SELECT *`
+`src/db/queries.ts` `getTransactions` fetches each row's products with `SELECT * FROM products …`. The list view only needs name/brand/cost/product_type, yet `tags` and `description` are pulled on every load, and a future wide column (e.g. a receipt blob) would silently bloat every transactions-list response. Enumerate the columns actually used.
 
