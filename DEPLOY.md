@@ -271,6 +271,13 @@ docker compose exec -T db pg_dump --no-owner --no-acl -Fc \
 Copy the dump off the server (e.g. `scp` to your machine, or DigitalOcean Spaces).
 Take one before any destructive migration.
 
+> **Latest snapshot:** `backups/finmon-2026-06-29.dump` (gitignored, like the rest
+> of `backups/`) is a custom-format (`pg_dump -Fc`) backup pulled from production on
+> 2026-06-29. Its schema is still at
+> migrations **001–006** (no `products` table, no `status`/`store` columns), so prod
+> predates the 0.2.0 release — restoring it and booting the current app applies
+> **007–010** on top automatically.
+
 **Restore** a dump into a running DB: same `pg_restore` command as in the migration
 section above.
 
