@@ -24,6 +24,9 @@ Migrations, seed scripts, env vars, date-column shapes → `src/db/CLAUDE.md` (a
 ## Issue tracking
 Audit findings live in `TO_FIX.md`, grouped by severity (Critical / High / Medium / Low). When an issue is fixed, remove it from `TO_FIX.md` and move it to `FIXED.md` under the current date with a short **Fix:** note. The workflow is documented at the top of `TO_FIX.md`.
 
+## Versioning
+Shipped feature and behaviour changes are logged in `VERSIONS.md` (newest first, one entry per release). When you complete a meaningful update — a feature, a behaviour change, a migration — add an entry there and bump `version` in `package.json`. This is distinct from `TO_FIX.md` / `FIXED.md`, which track audit findings rather than the changelog.
+
 ## Conventions
 - **Reads**: async server components call `src/db/queries.ts`. No API routes.
 - **Writes**: server actions in `src/actions/*.ts` (`"use server"`) — read `FormData`, validate, `pool.query(...)`, `revalidatePath(...)`.
