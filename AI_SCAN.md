@@ -7,21 +7,26 @@ Code: `src/lib/receipt-scan.ts` (`scanReceipt`) · `src/actions/receipt.ts`
 
 ## Process
 
-1. **Upload** — user picks a photo; the client downscales it to a JPEG `data:` URL
-   (not persisted).
+1. **Upload** — user picks a photo; the client downscales it to a JPEG `data:` URL.
 2. **Create** — on the create form a staged receipt starts the transaction as
    `processing` and returns its id; the scan then runs in the background (added
    independently). In the products modal, pressing Scan first clears the existing
    products and marks the row `processing` (`startReceiptScan` — a new scan
    *replaces* the old products), then runs the scan in the background; a row
    already `processing` can't be re-scanned.
-3. **Scan** — `scanReceipt` sends the image to OpenAI with the composed system
+3. **Store** — before the vision call, the action persists the image into the
+   `receipts` table (migration 011; upsert on `transaction_id`, so a re-scan
+   replaces the stored photo and it survives a failed scan; a store failure is
+   logged but never aborts the scan). It's served back by the authed
+   `/api/receipts/[id]` route handler, linked as "View receipt" in the products
+   modal via `Transaction.receipt_id`.
+4. **Scan** — `scanReceipt` sends the image to OpenAI with the composed system
    prompt (see **Prompt** below) + strict schema, `JSON.parse`s the reply,
    validates it with `zod`, and maps it to product fields (trim strings, keep only
    positive numbers, drop unnamed items). The HTTP call
    is bounded by a **60 s `AbortController` timeout** (mapped to a friendly
    "timed out" error) so a hung request can't leave the row stuck `processing`.
-4. **Attach** — the action inserts the products and recomputes status:
+5. **Attach** — the action inserts the products and recomputes status:
    `ready_to_verify` if product costs sum to `transaction.amount`, else
    `unverified`. The recompute + `revalidatePath` run in a `finally` that covers
    **every** post-ownership failure path — scan error, timeout, *and a bad/missing

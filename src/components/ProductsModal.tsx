@@ -156,7 +156,11 @@ export default function ProductsModal({
                 {mismatch && ` (${tx.amount.toFixed(2)})`}
               </p>
 
-              <ReceiptScanner txId={tx.id} status={tx.status} />
+              <ReceiptScanner
+                txId={tx.id}
+                status={tx.status}
+                receiptId={tx.receipt_id ?? null}
+              />
 
               <AddProductForm txId={tx.id} />
             </div>
@@ -664,9 +668,11 @@ function ProductFieldsEditor({
 function ReceiptScanner({
   txId,
   status,
+  receiptId,
 }: {
   txId: number;
   status: TransactionStatus;
+  receiptId: number | null;
 }) {
   const [image, setImage] = useState<StagedImage | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -738,11 +744,23 @@ function ReceiptScanner({
         </button>
       </div>
       {error && <p className="text-xs text-red-600">{error}</p>}
-      <p className="text-[11px] text-zinc-400">
-        {processing
-          ? "Scanning the receipt — line items will appear here shortly."
-          : "Upload a receipt photo to auto-add its line items as products."}
-      </p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[11px] text-zinc-400">
+          {processing
+            ? "Scanning the receipt — line items will appear here shortly."
+            : "Upload a receipt photo to auto-add its line items as products."}
+        </p>
+        {receiptId != null && (
+          <a
+            href={`/api/receipts/${receiptId}`}
+            target="_blank"
+            rel="noreferrer"
+            className="shrink-0 text-[11px] text-zinc-500 underline hover:text-zinc-700"
+          >
+            View receipt
+          </a>
+        )}
+      </div>
     </div>
   );
 }

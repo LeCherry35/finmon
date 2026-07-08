@@ -76,6 +76,25 @@ export async function userOwnsTransaction(
   return (rowCount ?? 0) > 0;
 }
 
+export type ReceiptImage = {
+  image: Buffer;
+  content_type: string;
+};
+
+/** The stored receipt photo by receipt id, scoped to `userId` — the route
+ *  handler at /api/receipts/[id] streams it. Null when it doesn't exist or
+ *  belongs to another user. */
+export async function getReceiptImage(
+  userId: string,
+  receiptId: number,
+): Promise<ReceiptImage | null> {
+  const { rows } = await pool.query<ReceiptImage>(
+    "SELECT image, content_type FROM receipts WHERE user_id = $1 AND id = $2",
+    [userId, receiptId],
+  );
+  return rows[0] ?? null;
+}
+
 export async function getAvailableMonths(userId: string): Promise<string[]> {
   const { rows } = await pool.query<{ month: string }>(
     `SELECT month FROM (
@@ -232,10 +251,12 @@ export async function getTransactions(
   const catFilter = anyArrayFilter("t.category_id", f.categoryIds, "int", params);
   if (catFilter) where.push(catFilter);
 
+  // receipts.transaction_id is UNIQUE, so the LEFT JOIN never multiplies rows.
   const { rows } = await pool.query<Transaction>(
-    `SELECT t.*, c.name AS category_name
+    `SELECT t.*, c.name AS category_name, r.id AS receipt_id
      FROM transactions t
      JOIN categories c ON c.id = t.category_id
+     LEFT JOIN receipts r ON r.transaction_id = t.id
      WHERE ${where.join(" AND ")}
      ORDER BY t.date DESC, t.id DESC`,
     params,

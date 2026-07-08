@@ -5,7 +5,7 @@ Personal finance tracker. Each user signs in and gets their own isolated data �
 
 Entities:
 - **Category** — name + priority (0–10). Used to classify transactions and to set monthly plans against.
-- **Transaction** — `amount`, `type` (`income` | `spend`), `category_id`, `date` (`YYYY-MM-DD`), optional `note`, optional `store` (merchant name, migration 010), `status`. Made up of one or more **Products**. `status` is `processing` | `unverified` | `ready_to_verify` | `verified` (default `unverified`); it's recomputed automatically from the product line items — when their costs sum to `amount` it becomes `ready_to_verify`, otherwise `unverified` (a `verified` transaction can be downgraded). `processing` is now driven by **receipt scanning**: uploading a receipt photo on the create form starts the row `processing` and an OpenAI vision call (`src/lib/receipt-scan.ts` → `src/actions/receipt.ts`) parses its line items into products under the hood, then recomputes status. The `ready_to_verify` → `verified` transition is **user-driven**: the row's status tag is itself the verify control — when a transaction is `ready_to_verify`, clicking its `StatusBadge` calls `verifyTransaction` (there's no separate Verify button anymore).
+- **Transaction** — `amount`, `type` (`income` | `spend`), `category_id`, `date` (`YYYY-MM-DD`), optional `note`, optional `store` (merchant name, migration 010), `status`. Made up of one or more **Products**. `status` is `processing` | `unverified` | `ready_to_verify` | `verified` (default `unverified`); it's recomputed automatically from the product line items — when their costs sum to `amount` it becomes `ready_to_verify`, otherwise `unverified` (a `verified` transaction can be downgraded). `processing` is now driven by **receipt scanning**: uploading a receipt photo on the create form starts the row `processing` and an OpenAI vision call (`src/lib/receipt-scan.ts` → `src/actions/receipt.ts`) parses its line items into products under the hood, then recomputes status. The uploaded photo itself is **stored** (`receipts` table, one per transaction, replaced on re-scan) and viewable via the "View receipt" link in the products modal, served by the authed route handler `/api/receipts/[id]`. The `ready_to_verify` → `verified` transition is **user-driven**: the row's status tag is itself the verify control — when a transaction is `ready_to_verify`, clicking its `StatusBadge` calls `verifyTransaction` (there's no separate Verify button anymore).
 - **Product** — a line item on a transaction: `name` (only mandatory), optional `brand`, `cost`, `product_type`, `tags` (`TEXT[]`), `description`, plus optional `price`, `amount` (quantity) and `unit` (migration 008, all wired through the type, actions and modal UI; positive-number validation, independent of `cost` — no enforced `price * amount = cost`). Cost lives on the line item (not a shared catalog), so the same type/brand can recur at different costs. `transaction.amount` stays authoritative — products are an optional breakdown, not forced to sum to it. A new transaction starts with no products; the user adds them later. (Migration 007 backfilled existing rows with an `other` product, but new ones no longer get one.)
 - **Plan** — `(category_id, month)` budget; one amount per category per `YYYY-MM`. Upsert on conflict.
 
@@ -16,6 +16,9 @@ Next.js 16 (App Router), React 19, PostgreSQL via `pg`, Tailwind v4, TypeScript,
 
 ## Database
 Migrations, seed scripts, env vars, date-column shapes → `src/db/CLAUDE.md` (auto-loaded when working in `src/db/`).
+
+## Local dev
+`DEV.md` — running locally (`npm run dev` + local Postgres) and the dev test account for manual testing.
 
 ## Deployment
 - DigitalOcean Droplet, Docker Compose: app + self-hosted PostgreSQL + nginx reverse proxy on a private network (Postgres data on the `pgdata` volume). nginx terminates TLS on `:443` with Cloudflare in front, so the app is served over HTTPS at its domain; neither the app nor Postgres is published to the host. Built from the repo on the server; deploys are `git pull` + `docker compose up -d --build`.
@@ -28,7 +31,7 @@ Audit findings live in `TO_FIX.md`, grouped by severity (Critical / High / Mediu
 Shipped feature and behaviour changes are logged in `VERSIONS.md` (newest first, one entry per release). When you complete a meaningful update — a feature, a behaviour change, a migration — add an entry there and bump `version` in `package.json`. This is distinct from `TO_FIX.md` / `FIXED.md`, which track audit findings rather than the changelog.
 
 ## Conventions
-- **Reads**: async server components call `src/db/queries.ts`. No API routes.
+- **Reads**: async server components call `src/db/queries.ts`. No API routes — the sole exceptions are Better Auth's handler and `/api/receipts/[id]`, which streams stored receipt images (binary can't come from a server component).
 - **Writes**: server actions in `src/actions/*.ts` (`"use server"`) — read `FormData`, validate, `pool.query(...)`, `revalidatePath(...)`.
 - Entity types are exported from their action file and re-imported by `queries.ts`.
 - **Filters**: shared `FilterPanel` + URL-param state across list pages — details in `src/lib/CLAUDE.md`.

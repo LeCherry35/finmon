@@ -10,6 +10,7 @@ import {
   getExpenditureSeries,
   getPlansForMonth,
   getPlansSummary,
+  getReceiptImage,
   getTransactions,
   userOwnsCategory,
 } from "@/db/queries";
@@ -126,11 +127,28 @@ describe("getExpenditureSeries", () => {
   });
 });
 
+describe("getReceiptImage", () => {
+  it("returns the user-scoped image row when it exists", async () => {
+    const row = { image: Buffer.from("x"), content_type: "image/jpeg" };
+    query.mockResolvedValueOnce({ rows: [row] });
+    expect(await getReceiptImage(USER, 7)).toEqual(row);
+    const { sql, params } = lastCall();
+    expect(sql).toMatch(/FROM receipts WHERE user_id = \$1 AND id = \$2/);
+    expect(params).toEqual([USER, 7]);
+  });
+
+  it("returns null when the receipt is missing or belongs to another user", async () => {
+    expect(await getReceiptImage(USER, 7)).toBeNull();
+  });
+});
+
 describe("getTransactions", () => {
-  it("scopes to the user with no filters", async () => {
+  it("scopes to the user, left-joins the receipt id, with no filters", async () => {
     await getTransactions(USER);
     const { sql, params } = lastCall();
     expect(sql).toMatch(/t\.user_id = \$1/);
+    expect(sql).toMatch(/LEFT JOIN receipts r ON r\.transaction_id = t\.id/);
+    expect(sql).toMatch(/r\.id AS receipt_id/);
     expect(sql).toMatch(/ORDER BY t\.date DESC, t\.id DESC/);
     expect(params).toEqual([USER]);
   });
@@ -188,6 +206,7 @@ describe("tenancy", () => {
     await getExpendituresByCategory(USER);
     await getExpenditureSeries(USER, ["2026-06"], null, "day");
     await getTransactions(USER);
+    await getReceiptImage(USER, 1);
 
     for (const [sql, params] of query.mock.calls) {
       expect(sql).toMatch(/user_id = \$1/);

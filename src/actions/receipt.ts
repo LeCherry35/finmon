@@ -44,15 +44,53 @@ export async function startReceiptScan(formData: FormData): Promise<ActionResult
   return { ok: true };
 }
 
+/** `data:image/jpeg;base64,...` → decoded bytes + mime, or null when the URL
+ *  isn't a base64 image data URL (nothing storable). */
+function parseImageDataUrl(
+  dataUrl: string,
+): { bytes: Buffer; contentType: string } | null {
+  const m = /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i.exec(dataUrl);
+  if (!m) return null;
+  return { bytes: Buffer.from(m[2], "base64"), contentType: m[1].toLowerCase() };
+}
+
+/** Persist the uploaded receipt image for a transaction (one per transaction —
+ *  a re-scan replaces it via upsert). Storage is secondary to scanning: a
+ *  failure here is logged but never aborts the scan. */
+async function saveReceiptImage(
+  userId: string,
+  transactionId: number,
+  imageDataUrl: string,
+): Promise<void> {
+  try {
+    const parsed = parseImageDataUrl(imageDataUrl);
+    if (!parsed) return;
+    await pool.query(
+      `INSERT INTO receipts (transaction_id, user_id, image, content_type)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (transaction_id)
+       DO UPDATE SET image = EXCLUDED.image, content_type = EXCLUDED.content_type, created_at = now()`,
+      [transactionId, userId, parsed.bytes, parsed.contentType],
+    );
+  } catch (err) {
+    console.error(
+      `Failed to store receipt image for transaction ${transactionId}:`,
+      err instanceof Error ? err.stack ?? err.message : err,
+    );
+  }
+}
+
 /**
  * Scan a receipt image for an existing transaction and attach the parsed line
  * items as product rows. Used by the create flow (after the transaction is
  * created as `processing`) and by the products modal (after `startReceiptScan`).
  *
- * The image arrives as a `data:` URL in `image`. On success the parsed products
- * are inserted and the transaction's status is recomputed (it becomes
- * `ready_to_verify` when the product costs sum to `amount`, else `unverified`).
- * On any failure we still recompute so the row never stays stuck on `processing`.
+ * The image arrives as a `data:` URL in `image`. It is stored in the `receipts`
+ * table before the vision call (so the photo survives even when the scan
+ * fails), then on success the parsed products are inserted and the
+ * transaction's status is recomputed (it becomes `ready_to_verify` when the
+ * product costs sum to `amount`, else `unverified`). On any failure we still
+ * recompute so the row never stays stuck on `processing`.
  *
  * Once the transaction is known to be valid and owned, the rest of the work —
  * including the image-format check — runs inside the `try`, so EVERY failure
@@ -76,6 +114,9 @@ export async function scanReceiptForTransaction(
     const image = ((formData.get("image") as string | null) ?? "").trim();
     if (!image.startsWith("data:image/"))
       throw new Error("No receipt image provided");
+
+    // Store the photo first so it survives a failed scan (never throws).
+    await saveReceiptImage(userId, transactionId, image);
 
     const { products } = await scanReceipt(image);
     await insertProducts(userId, transactionId, products);

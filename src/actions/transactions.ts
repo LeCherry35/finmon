@@ -23,6 +23,9 @@ export type Transaction = {
   status: TransactionStatus;
   category_name?: string;
   products?: Product[];
+  /** Id of the stored receipt image (LEFT JOIN in getTransactions), served at
+   *  /api/receipts/[id]. Null when no receipt was ever scanned. */
+  receipt_id?: number | null;
 };
 
 export type ActionResult = { ok: true } | { ok: false; error: string };

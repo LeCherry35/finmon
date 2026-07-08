@@ -8,6 +8,24 @@ Entry shape: `## <version> — <YYYY-MM-DD> — <headline>`, then **Added / Chan
 
 ---
 
+## 0.3.0 — 2026-07-08 — Receipt photo storage
+
+Uploaded receipt photos are now **kept**, not just scanned and discarded. Each scanned transaction stores its (client-downscaled, ~100–300 KB) receipt image and can show it again later.
+
+### Added
+- **`receipts` table** (migration 011) — one stored image per transaction (`BYTEA` + content type), written by the scan action via upsert *before* the vision call, so the photo survives a failed scan and a re-scan replaces it. Stored in Postgres deliberately: images ride along in the existing DB backup/snapshot workflow instead of needing a separate file-storage backup.
+- **`/api/receipts/[id]` route handler** — streams the stored image, session-checked (401) and tenant-scoped (404 for missing/foreign ids), `Cache-Control: private, no-store`.
+- **"View receipt" link** in the products modal's scanner box whenever the transaction has a stored receipt (`Transaction.receipt_id`, LEFT JOINed by `getTransactions`).
+- **Tests** — receipt persistence in the scan action, the new query, the route handler's auth/404/streaming branches, and the modal link (suite now 232 tests + 1 todo).
+
+### Migrations
+- **011** — `receipts` table.
+
+### Deploy notes
+- No new env vars or compose changes — `git pull` + `docker compose up -d --build` applies migration 011 on startup. Expect the DB (and its backups) to grow by roughly the size of the stored receipt JPEGs.
+
+---
+
 ## 0.2.0 — 2026-06-30 — AI receipt scanning & product line items
 
 Transactions are now made up of **product line items**, and a receipt photo can fill them in automatically with a single OpenAI vision call. Status moves through a `processing → unverified → ready_to_verify → verified` workflow driven by whether the line items add up.

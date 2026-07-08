@@ -83,6 +83,7 @@ the validation-rejection tables — most action tests do.
 | Server actions | `src/actions/*.ts` | Mock `@/db`, `@/lib/dal`, `next/cache`; assert validation, SQL params, `revalidatePath` |
 | DB queries | `src/db/queries.ts` | Mock `@/db`; assert generated SQL + param array (incl. tenancy) |
 | Middleware / auth | `src/proxy.ts`, `src/lib/dal.ts` | Mock `better-auth/cookies` / `@/lib/auth`; assert redirects |
+| Route handlers | `src/app/api/receipts/[id]/route.ts` | Mock `@/lib/dal` + `@/db/queries`; call `GET(request, { params })` directly (`params` is a Promise) and assert status/headers/body |
 | Components | `src/components/*` | jsdom + RTL; mock the action module and `next/navigation`; drive via `user-event`, assert state/URL/`FormData` |
 | E2E | full stack | _Not yet — Phase 6_ |
 
@@ -223,7 +224,7 @@ with E2E as a separate job behind a Postgres service container.
 
 ## Coverage status
 
-152 tests (1 `todo`) across 18 files. Targeted modules are at/near 100%; overall
+232 tests (1 `todo`) across 24 files. Targeted modules are at/near 100%; overall
 line coverage is dragged down only by server components/pages and infra files
 (`auth.ts`, `db/index.ts`) that aren't unit-tested. (See `TESTS_COVERAGE.md` for
 the full plan.)

@@ -92,6 +92,46 @@ describe("scanReceiptForTransaction", () => {
     expect(revalidatePath).toHaveBeenCalledWith("/transactions");
   });
 
+  it("stores the receipt image via upsert before the vision call", async () => {
+    scanReceipt.mockResolvedValueOnce({ store: null, total: null, products: [] });
+
+    await scanReceiptForTransaction(formData({ transaction_id: "42", image: IMG }));
+
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toMatch(/INSERT INTO receipts/);
+    expect(sql).toMatch(/ON CONFLICT \(transaction_id\)/); // re-scan replaces
+    expect(params).toEqual([
+      42,
+      TEST_USER_ID,
+      Buffer.from("AAAA", "base64"),
+      "image/jpeg",
+    ]);
+  });
+
+  it("stores the image even when the scan itself fails", async () => {
+    scanReceipt.mockRejectedValueOnce(new Error("boom"));
+
+    await scanReceiptForTransaction(formData({ transaction_id: "42", image: IMG }));
+
+    expect(query.mock.calls[0][0]).toMatch(/INSERT INTO receipts/);
+  });
+
+  it("a failed image store is logged but does not abort the scan", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    query.mockRejectedValueOnce(new Error("disk full")); // the receipts upsert
+    const products = [{ name: "Milk", cost: 2.5, tags: [] }];
+    scanReceipt.mockResolvedValueOnce({ store: null, total: null, products });
+
+    const res = await scanReceiptForTransaction(
+      formData({ transaction_id: "42", image: IMG }),
+    );
+
+    expect(res).toEqual({ ok: true });
+    expect(insertProducts).toHaveBeenCalledWith(TEST_USER_ID, 42, products);
+    expect(error).toHaveBeenCalled();
+    error.mockRestore();
+  });
+
   it.each([
     ["0", IMG],
     ["-3", IMG],

@@ -76,6 +76,28 @@ describe("ProductsModal", () => {
     expect(await screen.findByText("Oat Milk")).toBeInTheDocument();
   });
 
+  it("links to the stored receipt only when the transaction has one", async () => {
+    const { unmount } = render(
+      <ProductsModal tx={tx} categories={categories} onClose={() => {}} />,
+    );
+    await revealProducts();
+    expect(screen.queryByRole("link", { name: "View receipt" })).not.toBeInTheDocument();
+    unmount();
+
+    render(
+      <ProductsModal
+        tx={{ ...tx, receipt_id: 7 }}
+        categories={categories}
+        onClose={() => {}}
+      />,
+    );
+    await revealProducts();
+    expect(screen.getByRole("link", { name: "View receipt" })).toHaveAttribute(
+      "href",
+      "/api/receipts/7",
+    );
+  });
+
   it("flags a product/transaction total mismatch (non-blocking)", async () => {
     render(<ProductsModal tx={tx} categories={categories} onClose={() => {}} />);
     await revealProducts();
