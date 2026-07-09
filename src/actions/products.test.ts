@@ -69,12 +69,13 @@ describe("addProduct", () => {
         price: "1.75",
         amount: "2",
         unit: " L ",
+        discount: "0.50",
       }),
     );
     expect(result).toEqual({ ok: true });
     const [sql, params] = query.mock.calls[0];
     expect(sql).toMatch(/INSERT INTO products/);
-    // transaction_id, user_id, name, brand, cost, product_type, tags, description, price, amount, unit
+    // transaction_id, user_id, name, brand, cost, product_type, tags, description, price, amount, unit, discount
     expect(params).toEqual([
       5,
       TEST_USER_ID,
@@ -87,6 +88,7 @@ describe("addProduct", () => {
       1.75,
       2,
       "L",
+      0.5,
     ]);
     expect(revalidatePath).toHaveBeenCalledWith("/transactions");
   });
@@ -107,6 +109,7 @@ describe("addProduct", () => {
       null,
       null,
       null,
+      null,
     ]);
   });
 });
@@ -116,6 +119,7 @@ describe("updateProduct", () => {
     [{ id: "0", name: "X" }, "Invalid product"],
     [{ id: "5", name: "" }, "Name is required"],
     [{ id: "5", name: "X", cost: "-1" }, "Cost must be positive"],
+    [{ id: "5", name: "X", discount: "0" }, "Discount must be positive"],
   ])("rejects invalid input (%o)", async (fields, error) => {
     const result = await updateProduct(formData(fields));
     expect(result).toEqual({ ok: false, error });
@@ -128,13 +132,14 @@ describe("updateProduct", () => {
     );
     expect(result).toEqual({ ok: true });
     const [sql, params] = query.mock.calls[0];
-    expect(sql).toMatch(/WHERE id = \$10 AND user_id = \$11/);
+    expect(sql).toMatch(/WHERE id = \$11 AND user_id = \$12/);
     expect(params).toEqual([
       "Eggs",
       null,
       4,
       null,
       ["protein"],
+      null,
       null,
       null,
       null,
@@ -154,6 +159,7 @@ describe("recomputeTransactionStatus", () => {
   async function statusFor(row: {
     amount: number | null;
     scanned_total: number | null;
+    scanned_discount?: number | null;
     cost_total: string;
   }): Promise<string> {
     query.mockReset();
@@ -182,6 +188,19 @@ describe("recomputeTransactionStatus", () => {
 
   it("is unverified when there is nothing to match costs against", async () => {
     expect(await statusFor({ amount: null, scanned_total: null, cost_total: "30" })).toBe("unverified");
+  });
+
+  it("nets a check-wide scanned discount off the cost sum", async () => {
+    // costs sum to 33 but the check had a 3-off general discount → 30 paid
+    expect(
+      await statusFor({ amount: null, scanned_total: 30, scanned_discount: 3, cost_total: "33" }),
+    ).toBe("ready_to_verify");
+  });
+
+  it("a check-wide discount does not excuse costs that genuinely miss", async () => {
+    expect(
+      await statusFor({ amount: null, scanned_total: 30, scanned_discount: 3, cost_total: "30" }),
+    ).toBe("unverified");
   });
 
   it("does nothing for a missing/foreign transaction", async () => {

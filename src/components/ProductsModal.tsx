@@ -20,6 +20,7 @@ type FormFields = {
   price: string;
   amount: string;
   unit: string;
+  discount: string;
 };
 
 const EMPTY_FORM: FormFields = {
@@ -32,6 +33,7 @@ const EMPTY_FORM: FormFields = {
   price: "",
   amount: "",
   unit: "",
+  discount: "",
 };
 
 function toForm(p: Product): FormFields {
@@ -45,6 +47,7 @@ function toForm(p: Product): FormFields {
     price: p.price != null ? String(p.price) : "",
     amount: p.amount != null ? String(p.amount) : "",
     unit: p.unit ?? "",
+    discount: p.discount != null ? String(p.discount) : "",
   };
 }
 
@@ -58,6 +61,7 @@ function appendFields(fd: FormData, f: FormFields) {
   fd.append("price", f.price);
   fd.append("amount", f.amount);
   fd.append("unit", f.unit);
+  fd.append("discount", f.discount);
 }
 
 const inputCls =
@@ -87,6 +91,11 @@ export default function ProductsModal({
   const products = tx.products ?? [];
   const productCount = products.length;
   const productTotal = products.reduce((s, p) => s + (p.cost ?? 0), 0);
+  // A check-wide scanned discount reduces what was paid without belonging to
+  // any line, so the comparable product total nets it off — the same maths as
+  // recomputeTransactionStatus.
+  const generalDiscount = tx.scanned_discount ?? 0;
+  const netProductTotal = productTotal - generalDiscount;
   // The manual amount when present, else the scanned receipt total — the same
   // figure recomputeTransactionStatus matches product costs against.
   const effectiveAmount = tx.amount ?? tx.scanned_total ?? null;
@@ -94,7 +103,7 @@ export default function ProductsModal({
   // which drives the ready_to_verify status from the same comparison. With no
   // amount at all there's nothing to compare against.
   const mismatch =
-    effectiveAmount !== null && Math.abs(productTotal - effectiveAmount) >= 1;
+    effectiveAmount !== null && Math.abs(netProductTotal - effectiveAmount) >= 1;
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center">
@@ -158,6 +167,8 @@ export default function ProductsModal({
                 className={`text-xs ${mismatch ? "text-red-600" : "text-emerald-600"}`}
               >
                 Total: {productTotal.toFixed(2)}
+                {generalDiscount > 0 &&
+                  ` − ${generalDiscount.toFixed(2)} discount = ${netProductTotal.toFixed(2)}`}
                 {mismatch && effectiveAmount !== null && ` (${effectiveAmount.toFixed(2)})`}
               </p>
 
@@ -269,6 +280,12 @@ function TransactionEditor({
           )}
           {tx.scanned_total != null && (
             <Detail label="Receipt total" value={tx.scanned_total.toFixed(2)} />
+          )}
+          {tx.scanned_discount != null && (
+            <Detail
+              label="Receipt discount"
+              value={`−${tx.scanned_discount.toFixed(2)}`}
+            />
           )}
           {/* Spend is the default — only surface the type when it's income. */}
           {tx.type === "income" && <Detail label="Type" value="Income" />}
@@ -498,6 +515,14 @@ function ProductItem({ product }: { product: Product }) {
           ) : (
             <span className="font-semibold text-red-500">—</span>
           )}
+          {product.discount != null && (
+            <span
+              className="block text-[11px] text-emerald-600"
+              title="Discount already included in the cost"
+            >
+              −{product.discount.toFixed(2)} discount
+            </span>
+          )}
         </div>
         <div className="flex gap-1">
           <button
@@ -668,11 +693,21 @@ function ProductFieldsEditor({
           className={inputCls}
         />
         <input
+          type="number"
+          step="0.01"
+          min="0.01"
+          value={form.discount}
+          onChange={set("discount")}
+          placeholder="Discount"
+          aria-label="Discount"
+          className={inputCls}
+        />
+        <input
           value={form.tags}
           onChange={set("tags")}
           placeholder="Tags (comma-separated)"
           aria-label="Tags"
-          className={`col-span-2 ${inputCls}`}
+          className={inputCls}
         />
       </div>
       <textarea

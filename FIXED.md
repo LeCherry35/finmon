@@ -1,4 +1,15 @@
 
+09.07.2026
+### ✅ FIXED — Process discounts
+The receipt scan ignored discounts entirely: a discounted line item's saving was invisible, and a check-wide discount (loyalty card, coupon) made the product costs sum above the receipt total, permanently blocking `ready_to_verify`.
+
+**Fix:** Discounts are read at both levels (0.5.0, migration 013). Per-product: `products.discount` — the money off that line, with `cost` staying the final paid figure (scan schema/prompt/examples instruct this; also manually editable in the product editor). Check-wide: `receipts.discount`, stored next to `total` and reset with it on a new image; since line costs sum pre-that-discount, `recomputeTransactionStatus` (and the modal's total line, rendered as `Total: sum − discount = net`) nets it off before matching the effective amount. Tests cover the scan mapping/schema, receipt-row persistence/reset, and the recompute netting.
+
+### ✅ FIXED — Store name and total are parsed from check but dont affect anything
+The scan read the merchant name and grand total off the receipt but discarded them — neither reached the transaction or influenced anything downstream.
+
+**Fix:** Resolved by the 0.4.0 scan-first work. The scanned `store` now fills a blank `transactions.store` (a manually entered one is never overwritten), and the scanned grand total is persisted in `receipts.total` (migration 012), where it acts as the fallback amount everywhere: shown in the transactions list and modal (`scanned_total`), counted in spend aggregations via `COALESCE(t.amount, r.total)`, matched against product costs by `recomputeTransactionStatus`, guarded against a disagreeing manual amount (blocks `ready_to_verify`), and adopted as the real `amount` on verify.
+
 09.06.2026
 ### ✅ FIXED — Status didn't change when a transaction's amount was manually edited
 `updateTransaction` (`src/actions/transactions.ts`) wrote a new `amount` but never re-derived `status` from the product line items. So editing the total left the row's status stale: a transaction whose products still summed to the *old* amount stayed `ready_to_verify`/`verified` after the amount moved away from that sum, and conversely editing the amount to match existing product costs never promoted the row to `ready_to_verify`.

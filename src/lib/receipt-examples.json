@@ -3,6 +3,7 @@
     "output": {
       "store": "АТБ",
       "total": 6.85,
+      "discount": null,
       "date": "2026-03-14",
       "category": "groceries",
       "products": [
@@ -14,7 +15,8 @@
           "tags": ["fruit", "banana", "fresh", "produce"],
           "price": 1.15,
           "amount": 1.2,
-          "unit": "kg"
+          "unit": "kg",
+          "discount": null
         },
         {
           "name": "Сир Чеддер Cathedral City",
@@ -24,7 +26,8 @@
           "tags": ["dairy", "cheese", "hard cheese", "cheddar"],
           "price": null,
           "amount": null,
-          "unit": null
+          "unit": null,
+          "discount": null
         }
       ]
     }
@@ -33,6 +36,7 @@
     "output": {
       "store": "A24",
       "total": 8.99,
+      "discount": null,
       "date": null,
       "category": "other",
       "products": [
@@ -44,15 +48,18 @@
           "tags": ["pharmacy", "painkiller", "medicine", "ibuprofen", "otc"],
           "price": null,
           "amount": 1,
-          "unit": "pcs"
+          "unit": "pcs",
+          "discount": null
         }
       ]
     }
   },
   {
+    "note": "Nectar-card discount applied to the whole check: items sum to 9.30, the card takes 1.00 off, the printed total paid is 8.30 — the check-wide saving goes in the top-level discount, never as a product.",
     "output": {
       "store": "Sainsbury's 300g",
-      "total": 9.3,
+      "total": 8.3,
+      "discount": 1.0,
       "date": "2025-11-02",
       "category": "groceries",
       "products": [
@@ -64,7 +71,8 @@
           "tags": ["dairy", "yogurt", "greek yogurt", "high protein"],
           "price": 2.25,
           "amount": 2,
-          "unit": "pcs"
+          "unit": "pcs",
+          "discount": null
         },
         {
           "name": "Cherry Tomatoes",
@@ -74,15 +82,18 @@
           "tags": ["vegetable", "tomato", "cherry tomato", "fresh", "produce"],
           "price": 8.0,
           "amount": 0.6,
-          "unit": "kg"
+          "unit": "kg",
+          "discount": null
         }
       ]
     }
   },
   {
+    "note": "Per-item discount: the milk line prints 22.49 × 2 = 44.98 with a знижка of 5.00 under it, so cost is the discounted 39.98 and the 5.00 goes in that product's discount. Costs (39.98 + 35.42) already sum to the 75.40 total.",
     "output": {
       "store": "Сільпо",
       "total": 75.4,
+      "discount": null,
       "date": "2026-01-27",
       "category": "groceries",
       "products": [
@@ -92,9 +103,10 @@
           "cost": 39.98,
           "product_type": "milk",
           "tags": ["dairy", "milk", "lactose"],
-          "price": 19.99,
+          "price": 22.49,
           "amount": 2,
-          "unit": "pcs"
+          "unit": "pcs",
+          "discount": 5.0
         },
         {
           "name": "Банани",
@@ -104,7 +116,8 @@
           "tags": ["fruit", "banana", "fresh", "produce"],
           "price": 36.9,
           "amount": 0.96,
-          "unit": "kg"
+          "unit": "kg",
+          "discount": null
         }
       ]
     }

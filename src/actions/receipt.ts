@@ -65,13 +65,13 @@ async function saveReceiptImage(
   try {
     const parsed = parseImageDataUrl(imageDataUrl);
     if (!parsed) return;
-    // total = NULL: a new image invalidates whatever total the previous scan
-    // read — the follow-up scan fills it back in.
+    // total/discount = NULL: a new image invalidates whatever the previous
+    // scan read — the follow-up scan fills them back in.
     await pool.query(
       `INSERT INTO receipts (transaction_id, user_id, image, content_type)
        VALUES ($1, $2, $3, $4)
        ON CONFLICT (transaction_id)
-       DO UPDATE SET image = EXCLUDED.image, content_type = EXCLUDED.content_type, created_at = now(), total = NULL`,
+       DO UPDATE SET image = EXCLUDED.image, content_type = EXCLUDED.content_type, created_at = now(), total = NULL, discount = NULL`,
       [transactionId, userId, parsed.bytes, parsed.contentType],
     );
   } catch (err) {
@@ -129,18 +129,19 @@ export async function scanReceiptForTransaction(
       [userId],
     );
 
-    const { store, total, date, category, products } = await scanReceipt(
+    const { store, total, discount, date, category, products } = await scanReceipt(
       image,
       categories.map((c) => c.name),
     );
 
-    // The receipt's grand total lives on the receipt row, never on
-    // transactions.amount — a manually entered amount stays authoritative and
-    // the recompute in the finally compares the two. No-ops when the image
-    // store failed (no receipts row) — that failure is already logged.
+    // The receipt's grand total (and any check-wide discount) lives on the
+    // receipt row, never on transactions.amount — a manually entered amount
+    // stays authoritative and the recompute in the finally compares the two.
+    // No-ops when the image store failed (no receipts row) — that failure is
+    // already logged.
     await pool.query(
-      "UPDATE receipts SET total = $1 WHERE transaction_id = $2 AND user_id = $3",
-      [total, transactionId, userId],
+      "UPDATE receipts SET total = $1, discount = $2 WHERE transaction_id = $3 AND user_id = $4",
+      [total, discount, transactionId, userId],
     );
 
     // Fill in transaction fields the user left blank. Category: the scan answers

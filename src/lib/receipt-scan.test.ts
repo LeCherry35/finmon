@@ -37,6 +37,7 @@ describe("scanReceipt", () => {
       openaiResponse({
         store: "Tesco",
         total: 5.5,
+        discount: 1.2,
         date: "2026-07-01",
         category: "groceries",
         products: [
@@ -50,6 +51,7 @@ describe("scanReceipt", () => {
             price: 1.25,
             amount: 2,
             unit: "L",
+            discount: 0.3,
           },
         ],
       }),
@@ -59,6 +61,7 @@ describe("scanReceipt", () => {
 
     expect(result.store).toBe("Tesco");
     expect(result.total).toBe(5.5);
+    expect(result.discount).toBe(1.2); // check-wide discount
     expect(result.date).toBe("2026-07-01");
     expect(result.category).toBe("groceries");
     expect(result.products).toEqual([
@@ -72,6 +75,7 @@ describe("scanReceipt", () => {
         price: 1.25,
         amount: 2,
         unit: "L",
+        discount: 0.3, // per-item discount
       },
     ]);
   });
@@ -112,6 +116,13 @@ describe("scanReceipt", () => {
     expect(schema.properties.date).toEqual({ type: ["string", "null"] });
     expect(schema.required).toContain("date");
     expect(schema.required).toContain("category");
+    // Discounts: check-wide on the root, per-item on each product — strict mode
+    // demands both be listed as required nullable fields.
+    expect(schema.properties.discount).toEqual({ type: ["number", "null"] });
+    expect(schema.required).toContain("discount");
+    const productSchema = schema.properties.products.items;
+    expect(productSchema.properties.discount).toEqual({ type: ["number", "null"] });
+    expect(productSchema.required).toContain("discount");
   });
 
   it("falls back to a lone 'other' enum when the user has no categories", async () => {
@@ -146,8 +157,9 @@ describe("scanReceipt", () => {
       openaiResponse({
         store: "  ",
         total: 0,
+        discount: -2,
         products: [
-          { name: "Bread", cost: 0, price: -1, amount: 0, tags: [] },
+          { name: "Bread", cost: 0, price: -1, amount: 0, discount: 0, tags: [] },
           { name: "   ", cost: 3, tags: [] }, // no name → dropped
         ],
       }),
@@ -157,6 +169,7 @@ describe("scanReceipt", () => {
 
     expect(result.store).toBeNull(); // blank → null
     expect(result.total).toBeNull(); // 0 → null
+    expect(result.discount).toBeNull(); // negative → null
     expect(result.products).toEqual([
       {
         name: "Bread",
@@ -168,6 +181,7 @@ describe("scanReceipt", () => {
         price: null, // -1 dropped
         amount: null, // 0 dropped
         unit: null,
+        discount: null, // 0 dropped
       },
     ]);
   });

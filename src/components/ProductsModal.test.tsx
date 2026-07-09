@@ -38,6 +38,7 @@ const product: Product = {
   price: 1.75,
   amount: 2,
   unit: "L",
+  discount: null,
 };
 
 const tx: Transaction = {

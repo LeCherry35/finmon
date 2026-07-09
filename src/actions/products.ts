@@ -18,6 +18,9 @@ export type Product = {
   price: number | null;
   amount: number | null;
   unit: string | null;
+  /** Money taken off this line. `cost` is the final amount paid AFTER the
+   *  discount — this field is informational, not subtracted again. */
+  discount: number | null;
 };
 
 /** Parsed-and-validated product fields shared by add/update. Numeric fields are
@@ -34,6 +37,7 @@ export type ProductFields = {
   price: number | null;
   amount: number | null;
   unit: string | null;
+  discount: number | null;
 };
 
 /** Product costs are treated as matching the transaction amount when they're
@@ -43,32 +47,40 @@ export type ProductFields = {
 const COST_TOLERANCE = 1;
 
 /** Recompute a transaction's status from its product line items: when the sum
- *  of product costs matches the effective amount (manual `amount`, or the
- *  scanned `receipts.total` when no manual amount exists) it becomes
- *  'ready_to_verify', otherwise 'unverified'. A manual amount that disagrees
- *  with the scanned total (≥ COST_TOLERANCE apart) is a mismatch — the
- *  transaction can never become 'ready_to_verify' until one of them changes.
- *  Applied unconditionally (a 'verified' transaction can be downgraded). Call
- *  after any product add/update/delete. Exported so the receipt-scan action
- *  (`src/actions/receipt.ts`) reuses the same transition. */
+ *  of product costs — minus the receipt's general discount (`receipts.discount`),
+ *  which reduces the amount paid without belonging to any line — matches the
+ *  effective amount (manual `amount`, or the scanned `receipts.total` when no
+ *  manual amount exists) it becomes 'ready_to_verify', otherwise 'unverified'.
+ *  A manual amount that disagrees with the scanned total (≥ COST_TOLERANCE
+ *  apart) is a mismatch — the transaction can never become 'ready_to_verify'
+ *  until one of them changes. Applied unconditionally (a 'verified' transaction
+ *  can be downgraded). Call after any product add/update/delete. Exported so
+ *  the receipt-scan action (`src/actions/receipt.ts`) reuses the same
+ *  transition. */
 export async function recomputeTransactionStatus(userId: string, transactionId: number) {
   const { rows } = await pool.query<{
     amount: number | null;
     scanned_total: number | null;
+    scanned_discount: number | null;
     cost_total: number;
   }>(
-    `SELECT t.amount, r.total AS scanned_total, COALESCE(SUM(p.cost), 0) AS cost_total
+    `SELECT t.amount, r.total AS scanned_total, r.discount AS scanned_discount,
+            COALESCE(SUM(p.cost), 0) AS cost_total
      FROM transactions t
      LEFT JOIN receipts r ON r.transaction_id = t.id
      LEFT JOIN products p ON p.transaction_id = t.id
      WHERE t.id = $1 AND t.user_id = $2
-     GROUP BY t.amount, r.total`,
+     GROUP BY t.amount, r.total, r.discount`,
     [transactionId, userId],
   );
   if (rows.length === 0) return;
   const amount = rows[0].amount ?? null;
   const scanned_total = rows[0].scanned_total ?? null;
-  const cost_total = Number(rows[0].cost_total ?? 0);
+  // Line costs are pre-general-discount, so net the check-wide discount off
+  // before comparing against the (final, paid) effective amount. Per-product
+  // discounts are already baked into their costs.
+  const cost_total =
+    Number(rows[0].cost_total ?? 0) - Number(rows[0].scanned_discount ?? 0);
   const effective = amount ?? scanned_total;
   let status: "ready_to_verify" | "unverified";
   if (
@@ -132,6 +144,9 @@ function parseProductFields(formData: FormData): ProductFields | { error: string
   const amount = parsePositive(formData, "amount", "Quantity");
   if (amount !== null && typeof amount === "object") return amount;
 
+  const discount = parsePositive(formData, "discount", "Discount");
+  if (discount !== null && typeof discount === "object") return discount;
+
   return {
     name,
     brand: nullable(formData, "brand"),
@@ -142,6 +157,7 @@ function parseProductFields(formData: FormData): ProductFields | { error: string
     price,
     amount,
     unit: nullable(formData, "unit"),
+    discount,
   };
 }
 
@@ -155,7 +171,7 @@ export async function insertProducts(
   items: ProductFields[],
 ) {
   if (items.length === 0) return;
-  const COLS = 11;
+  const COLS = 12;
   const values: unknown[] = [];
   const rows = items.map((f, i) => {
     const b = i * COLS;
@@ -171,11 +187,12 @@ export async function insertProducts(
       f.price,
       f.amount,
       f.unit,
+      f.discount,
     );
-    return `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, $${b + 6}, $${b + 7}, $${b + 8}, $${b + 9}, $${b + 10}, $${b + 11})`;
+    return `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, $${b + 6}, $${b + 7}, $${b + 8}, $${b + 9}, $${b + 10}, $${b + 11}, $${b + 12})`;
   });
   await pool.query(
-    `INSERT INTO products (transaction_id, user_id, name, brand, cost, product_type, tags, description, price, amount, unit)
+    `INSERT INTO products (transaction_id, user_id, name, brand, cost, product_type, tags, description, price, amount, unit, discount)
      VALUES ${rows.join(", ")}`,
     values,
   );
@@ -214,8 +231,8 @@ export async function updateProduct(formData: FormData): Promise<ActionResult> {
   const { rows } = await pool.query<{ transaction_id: number }>(
     `UPDATE products
      SET name = $1, brand = $2, cost = $3, product_type = $4, tags = $5, description = $6,
-         price = $7, amount = $8, unit = $9
-     WHERE id = $10 AND user_id = $11
+         price = $7, amount = $8, unit = $9, discount = $10
+     WHERE id = $11 AND user_id = $12
      RETURNING transaction_id`,
     [
       fields.name,
@@ -227,6 +244,7 @@ export async function updateProduct(formData: FormData): Promise<ActionResult> {
       fields.price,
       fields.amount,
       fields.unit,
+      fields.discount,
       id,
       userId,
     ],

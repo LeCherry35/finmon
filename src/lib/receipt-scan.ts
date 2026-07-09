@@ -14,6 +14,10 @@ import rawUnits from "@/lib/receipt-units.json";
 export type ScanResult = {
   store: string | null;
   total: number | null;
+  /** A general discount applied to the whole check (loyalty card, coupon) that
+   *  isn't attributable to a single line item. Per-item discounts live on the
+   *  products instead. `total` is always the final amount paid. */
+  discount: number | null;
   date: string | null;
   category: string | null;
   products: ProductFields[];
@@ -104,6 +108,7 @@ const buildResponseSchema = (categoryNames: string[]) => ({
   properties: {
     store: { type: ["string", "null"] },
     total: { type: ["number", "null"] },
+    discount: { type: ["number", "null"] },
     date: { type: ["string", "null"] },
     category: { type: "string", enum: [...categoryNames, "other"] },
     products: {
@@ -120,6 +125,7 @@ const buildResponseSchema = (categoryNames: string[]) => ({
           price: { type: ["number", "null"] },
           amount: { type: ["number", "null"] },
           unit: { type: ["string", "null"] },
+          discount: { type: ["number", "null"] },
         },
         required: [
           "name",
@@ -130,11 +136,12 @@ const buildResponseSchema = (categoryNames: string[]) => ({
           "price",
           "amount",
           "unit",
+          "discount",
         ],
       },
     },
   },
-  required: ["store", "total", "date", "category", "products"],
+  required: ["store", "total", "discount", "date", "category", "products"],
 });
 
 /** Defensive parse of the model's JSON — strict mode should already guarantee the
@@ -148,11 +155,13 @@ const ProductSchema = z.object({
   price: z.number().nullable().optional(),
   amount: z.number().nullable().optional(),
   unit: z.string().nullable().optional(),
+  discount: z.number().nullable().optional(),
 });
 
 const ResultSchema = z.object({
   store: z.string().nullable().optional(),
   total: z.number().nullable().optional(),
+  discount: z.number().nullable().optional(),
   date: z.string().nullable().optional(),
   category: z.string().nullable().optional(),
   products: z.array(ProductSchema),
@@ -268,6 +277,7 @@ export async function scanReceipt(
       price: positiveOrNull(p.price),
       amount: positiveOrNull(p.amount),
       unit: trimOrNull(p.unit),
+      discount: positiveOrNull(p.discount),
     }))
     // A line item with no name can't be stored (name is the one required field).
     .filter((p) => p.name.length > 0);
@@ -276,6 +286,7 @@ export async function scanReceipt(
   return {
     store: trimOrNull(parsed.store),
     total: positiveOrNull(parsed.total),
+    discount: positiveOrNull(parsed.discount),
     // A date in any other format can't be stored on the transaction.
     date: date !== null && SCAN_DATE_RE.test(date) ? date : null,
     category: trimOrNull(parsed.category),

@@ -18,10 +18,6 @@ Audit findings, ordered by severity.
 
 ## High — functional bugs in normal use
 
-### Process discounts
-the discount may be tied to product or to transaction
-
-### Store name and total are parsed from check but dont affect anything
 ---
 
 ## Medium — UX / robustness

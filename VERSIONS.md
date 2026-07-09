@@ -8,6 +8,26 @@ Entry shape: `## <version> — <YYYY-MM-DD> — <headline>`, then **Added / Chan
 
 ---
 
+## 0.5.0 — 2026-07-09 — Receipt discounts: per-product and check-wide
+
+The receipt scan now reads **discounts**: each line item can carry its own discount, and the check as a whole can carry a general one (loyalty card, coupon). Semantics: a product's `cost` is always the **final amount paid** for that line (its discount is informational, already baked in), while a check-wide discount is money the line items *don't* account for — so `sum(costs) − general discount ≈ total`, and the status recompute subtracts it.
+
+### Added
+- **`products.discount`** (migration 013) — the money taken off that specific line, scanned or entered manually (new Discount field in the product editor; shown under the cost in the products list).
+- **`receipts.discount`** (migration 013) — the check-wide discount as read by the scan. Reset to `NULL` with `total` when a new image is stored, filled on a successful scan. Exposed as `Transaction.scanned_discount` and shown as a "Receipt discount" detail row and in the modal's total line (`Total: X − Y discount = Z`).
+- **Scan schema** — `discount` added per product and at the receipt level (strict response schema, zod parse, prompt rules, and few-shot examples demonstrating both kinds).
+
+### Changed
+- **Status recompute** nets the check-wide `receipts.discount` off the product-cost sum before comparing against the effective amount (the modal's total line mirrors the same maths).
+
+### Migrations
+- **013** — add `products.discount` and `receipts.discount`.
+
+### Deploy notes
+- No new env vars — `git pull` + `docker compose up -d --build` applies migration 013 on startup. Receipts scanned before 0.5.0 have no discounts until re-scanned.
+
+---
+
 ## 0.4.0 — 2026-07-09 — Scan-first transactions: optional amount & category, scanned receipt total
 
 A transaction can now be created from a **receipt photo alone** — amount and category are optional, and the scan fills in what the user left blank. The receipt's printed grand total is stored and used as the fallback amount everywhere until a manual amount exists.
