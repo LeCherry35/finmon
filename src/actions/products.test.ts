@@ -159,7 +159,6 @@ describe("recomputeTransactionStatus", () => {
   async function statusFor(row: {
     amount: number | null;
     scanned_total: number | null;
-    scanned_discount?: number | null;
     cost_total: string;
   }): Promise<string> {
     query.mockReset();
@@ -188,19 +187,6 @@ describe("recomputeTransactionStatus", () => {
 
   it("is unverified when there is nothing to match costs against", async () => {
     expect(await statusFor({ amount: null, scanned_total: null, cost_total: "30" })).toBe("unverified");
-  });
-
-  it("nets a check-wide scanned discount off the cost sum", async () => {
-    // costs sum to 33 but the check had a 3-off general discount → 30 paid
-    expect(
-      await statusFor({ amount: null, scanned_total: 30, scanned_discount: 3, cost_total: "33" }),
-    ).toBe("ready_to_verify");
-  });
-
-  it("a check-wide discount does not excuse costs that genuinely miss", async () => {
-    expect(
-      await statusFor({ amount: null, scanned_total: 30, scanned_discount: 3, cost_total: "30" }),
-    ).toBe("unverified");
   });
 
   it("does nothing for a missing/foreign transaction", async () => {

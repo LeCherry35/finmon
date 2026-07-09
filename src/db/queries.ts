@@ -262,7 +262,7 @@ export async function getTransactions(
   // categories is a LEFT JOIN too: a transaction may have no category until a
   // receipt scan (or the user) fills one in.
   const { rows } = await pool.query<Transaction>(
-    `SELECT t.*, c.name AS category_name, r.id AS receipt_id, r.total AS scanned_total, r.discount AS scanned_discount
+    `SELECT t.*, c.name AS category_name, r.id AS receipt_id, r.total AS scanned_total
      FROM transactions t
      LEFT JOIN categories c ON c.id = t.category_id
      LEFT JOIN receipts r ON r.transaction_id = t.id

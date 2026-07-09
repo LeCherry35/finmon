@@ -67,12 +67,17 @@ config files, so it can be tuned without touching code:
   maintainer-only annotation and is **never** sent to the model.
 
 It tells the model to extract five things — the merchant (`store`), the grand
-total (`total`), the purchase date (`date`, `YYYY-MM-DD`), a best-fit spending
-category for the receipt as a whole (`category`, chosen from the injected list,
-falling back to `"other"`), and one `products` object per purchased line item
-(the grand total/subtotals/tax/discounts go nowhere near `products`). Per product it reads
-`name`, `cost` (line total), and optional `brand`/`product_type`/`amount`/`unit`/
-`price`/`tags`. `product_type`, `unit` and `tags` must be **lowercase English**
+total (`total` — always the **final amount paid**, with every discount already
+reflected; a check-wide discount, e.g. a loyalty card or coupon, is not
+extracted at all and never subtracted from the total), the purchase date
+(`date`, `YYYY-MM-DD`), a best-fit spending category for the receipt as a whole
+(`category`, chosen from the injected list, falling back to `"other"`), and one
+`products` object per purchased line item
+(the grand total/subtotals/tax/discount lines go nowhere near `products`). Per product it reads
+`name`, `cost` (line total, with any per-item discount already baked in), and
+optional `brand`/`product_type`/`amount`/`unit`/`price`/`tags`/`discount` (the
+money taken off that specific item — informational, since `cost` is already the
+discounted figure). `product_type`, `unit` and `tags` must be **lowercase English**
 even on a foreign-language receipt, and `unit` must be one of the allowed units.
 It uses `null` for anything it can't read and never invents values. `description`
 is **not** extracted — it's typed in manually later.
@@ -85,7 +90,7 @@ import.
 
 Strict `json_schema` structured output → `{ store, total, date, category,
 products[] }`, where each product is `{ name, brand, cost, product_type, tags,
-price, amount, unit }` (only `name` required). The schema is built per call
+price, amount, unit, discount }` (only `name` required). The schema is built per call
 because `category` is an **enum** of the user's own category names + `"other"`.
 Product fields mirror the stored ones **minus `description`** (which is
 manual-only), so items map straight onto line items. `total` lands in

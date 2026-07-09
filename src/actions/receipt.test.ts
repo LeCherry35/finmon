@@ -24,7 +24,7 @@ const IMG = "data:image/jpeg;base64,AAAA";
 
 /** A full ScanResult with everything absent — override what a test cares about. */
 function scanResult(overrides: Record<string, unknown> = {}) {
-  return { store: null, total: null, discount: null, date: null, category: null, products: [], ...overrides };
+  return { store: null, total: null, date: null, category: null, products: [], ...overrides };
 }
 
 /** Route the pool.query mock by SQL shape so tests don't depend on call order.
@@ -135,7 +135,7 @@ describe("scanReceiptForTransaction", () => {
     expect(scanReceipt).toHaveBeenCalledWith(IMG, ["groceries", "transport"]);
   });
 
-  it("stores the receipt image via upsert (resetting total + discount) before the vision call", async () => {
+  it("stores the receipt image via upsert (resetting total) before the vision call", async () => {
     primeQueries();
     scanReceipt.mockResolvedValueOnce(scanResult());
 
@@ -145,7 +145,6 @@ describe("scanReceiptForTransaction", () => {
     expect(sql).toMatch(/INSERT INTO receipts/);
     expect(sql).toMatch(/ON CONFLICT \(transaction_id\)/); // re-scan replaces
     expect(sql).toMatch(/total = NULL/); // a new image invalidates the old total
-    expect(sql).toMatch(/discount = NULL/); // …and the old check-wide discount
     expect(params).toEqual([
       42,
       TEST_USER_ID,
@@ -154,15 +153,15 @@ describe("scanReceiptForTransaction", () => {
     ]);
   });
 
-  it("stores the scanned grand total and check-wide discount on the receipt row", async () => {
+  it("stores the scanned grand total on the receipt row", async () => {
     primeQueries();
-    scanReceipt.mockResolvedValueOnce(scanResult({ total: 17.4, discount: 2.1 }));
+    scanReceipt.mockResolvedValueOnce(scanResult({ total: 17.4 }));
 
     await scanReceiptForTransaction(formData({ transaction_id: "42", image: IMG }));
 
     const totalCall = query.mock.calls.find(([sql]) => /UPDATE receipts SET total/.test(sql));
     expect(totalCall).toBeDefined();
-    expect(totalCall![1]).toEqual([17.4, 2.1, 42, TEST_USER_ID]);
+    expect(totalCall![1]).toEqual([17.4, 42, TEST_USER_ID]);
   });
 
   it("fills a blank category from an exact scanned-name match, never touching amount", async () => {

@@ -33,10 +33,6 @@ export type Transaction = {
    *  the fallback amount when no manual amount exists; a mismatch with a manual
    *  amount blocks verification. */
   scanned_total?: number | null;
-  /** Check-wide discount as read by the scan (receipts.discount) — not tied to
-   *  any line item. Product costs sum pre-discount, so the modal's total line
-   *  (like the status recompute) subtracts it. */
-  scanned_discount?: number | null;
 };
 
 export type ActionResult = { ok: true } | { ok: false; error: string };

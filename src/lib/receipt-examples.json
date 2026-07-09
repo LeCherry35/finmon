@@ -3,7 +3,6 @@
     "output": {
       "store": "АТБ",
       "total": 6.85,
-      "discount": null,
       "date": "2026-03-14",
       "category": "groceries",
       "products": [
@@ -36,7 +35,6 @@
     "output": {
       "store": "A24",
       "total": 8.99,
-      "discount": null,
       "date": null,
       "category": "other",
       "products": [
@@ -55,11 +53,10 @@
     }
   },
   {
-    "note": "Nectar-card discount applied to the whole check: items sum to 9.30, the card takes 1.00 off, the printed total paid is 8.30 — the check-wide saving goes in the top-level discount, never as a product.",
+    "note": "Nectar-card discount applied to the whole check: items sum to 9.30, the card takes 1.00 off, the printed total paid is 8.30. The total is the final 8.30 as printed; the check-wide saving is not extracted anywhere — never as a product, never subtracted from the total.",
     "output": {
       "store": "Sainsbury's 300g",
       "total": 8.3,
-      "discount": 1.0,
       "date": "2025-11-02",
       "category": "groceries",
       "products": [
@@ -93,7 +90,6 @@
     "output": {
       "store": "Сільпо",
       "total": 75.4,
-      "discount": null,
       "date": "2026-01-27",
       "category": "groceries",
       "products": [

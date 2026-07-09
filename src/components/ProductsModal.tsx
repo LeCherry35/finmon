@@ -91,11 +91,6 @@ export default function ProductsModal({
   const products = tx.products ?? [];
   const productCount = products.length;
   const productTotal = products.reduce((s, p) => s + (p.cost ?? 0), 0);
-  // A check-wide scanned discount reduces what was paid without belonging to
-  // any line, so the comparable product total nets it off — the same maths as
-  // recomputeTransactionStatus.
-  const generalDiscount = tx.scanned_discount ?? 0;
-  const netProductTotal = productTotal - generalDiscount;
   // The manual amount when present, else the scanned receipt total — the same
   // figure recomputeTransactionStatus matches product costs against.
   const effectiveAmount = tx.amount ?? tx.scanned_total ?? null;
@@ -103,7 +98,7 @@ export default function ProductsModal({
   // which drives the ready_to_verify status from the same comparison. With no
   // amount at all there's nothing to compare against.
   const mismatch =
-    effectiveAmount !== null && Math.abs(netProductTotal - effectiveAmount) >= 1;
+    effectiveAmount !== null && Math.abs(productTotal - effectiveAmount) >= 1;
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center">
@@ -167,8 +162,6 @@ export default function ProductsModal({
                 className={`text-xs ${mismatch ? "text-red-600" : "text-emerald-600"}`}
               >
                 Total: {productTotal.toFixed(2)}
-                {generalDiscount > 0 &&
-                  ` − ${generalDiscount.toFixed(2)} discount = ${netProductTotal.toFixed(2)}`}
                 {mismatch && effectiveAmount !== null && ` (${effectiveAmount.toFixed(2)})`}
               </p>
 
@@ -280,12 +273,6 @@ function TransactionEditor({
           )}
           {tx.scanned_total != null && (
             <Detail label="Receipt total" value={tx.scanned_total.toFixed(2)} />
-          )}
-          {tx.scanned_discount != null && (
-            <Detail
-              label="Receipt discount"
-              value={`−${tx.scanned_discount.toFixed(2)}`}
-            />
           )}
           {/* Spend is the default — only surface the type when it's income. */}
           {tx.type === "income" && <Detail label="Type" value="Income" />}

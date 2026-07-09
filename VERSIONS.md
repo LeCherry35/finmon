@@ -8,6 +8,34 @@ Entry shape: `## <version> — <YYYY-MM-DD> — <headline>`, then **Added / Chan
 
 ---
 
+## 0.5.2 — 2026-07-09 — Lock the mobile viewport: no zoom on input focus
+
+The mobile UI no longer zooms in when tapping a form field (or via pinch/double-tap) — the page stays pinned to the screen width.
+
+### Changed
+- **Viewport** (`src/app/layout.tsx`) — `maximumScale: 1, userScalable: false` added to the `viewport` export. Blocks pinch zoom on Android and iOS's automatic zoom-in on input focus (iOS still allows deliberate pinch zoom as an accessibility override).
+- **Form controls** (`globals.css`) — `input`/`select`/`textarea` are forced to 16px below the `md:` breakpoint, removing the trigger for iOS focus-zoom (any focused control under 16px) even where viewport hints are ignored. Mobile field text renders slightly larger than the surrounding `text-sm` labels as a result.
+
+### Deploy notes
+- No migration, no new env vars — `git pull` + `docker compose up -d --build`.
+
+---
+
+## 0.5.1 — 2026-07-09 — Drop the check-wide discount: the scanned total is final
+
+0.5.0's check-wide discount double-counted in practice: receipts print a **final** grand total with every discount already reflected (and final line costs), so netting `receipts.discount` off the product-cost sum broke the `ready_to_verify` match on exactly the receipts it was meant to help. Discounts are now **per-product only**; the scanned total is treated as the final amount paid, with nothing subtracted from it.
+
+### Changed
+- **Scan** no longer extracts a check-wide discount — the top-level `discount` is gone from the response schema, prompt rules, and few-shot examples (a stray one from the model is ignored). The prompt now stresses that `total` is the final paid figure.
+- **Status recompute** compares the plain product-cost sum against the effective amount — no discount netting on either side.
+- **Modal** — the "Receipt discount" detail row and the `Total: X − Y discount = Z` netting in the products total line are gone; per-product discounts still show under their line's cost.
+- **`receipts.discount`** is now **dormant**: nothing writes or reads it. The column is deliberately kept in the schema (no drop migration) in case a check-wide discount comes back later; values written by 0.5.0 scans linger but are ignored.
+
+### Deploy notes
+- No migration, no new env vars — `git pull` + `docker compose up -d --build`. Transactions knocked out of `ready_to_verify` by a 0.5.0-scanned check-wide discount fix themselves on the next product edit or re-scan (the recompute runs then).
+
+---
+
 ## 0.5.0 — 2026-07-09 — Receipt discounts: per-product and check-wide
 
 The receipt scan now reads **discounts**: each line item can carry its own discount, and the check as a whole can carry a general one (loyalty card, coupon). Semantics: a product's `cost` is always the **final amount paid** for that line (its discount is informational, already baked in), while a check-wide discount is money the line items *don't* account for — so `sum(costs) − general discount ≈ total`, and the status recompute subtracts it.

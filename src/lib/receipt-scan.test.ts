@@ -61,7 +61,9 @@ describe("scanReceipt", () => {
 
     expect(result.store).toBe("Tesco");
     expect(result.total).toBe(5.5);
-    expect(result.discount).toBe(1.2); // check-wide discount
+    // A stray top-level discount from the model is ignored — the total is
+    // already the final paid amount.
+    expect(result).not.toHaveProperty("discount");
     expect(result.date).toBe("2026-07-01");
     expect(result.category).toBe("groceries");
     expect(result.products).toEqual([
@@ -116,10 +118,10 @@ describe("scanReceipt", () => {
     expect(schema.properties.date).toEqual({ type: ["string", "null"] });
     expect(schema.required).toContain("date");
     expect(schema.required).toContain("category");
-    // Discounts: check-wide on the root, per-item on each product — strict mode
-    // demands both be listed as required nullable fields.
-    expect(schema.properties.discount).toEqual({ type: ["number", "null"] });
-    expect(schema.required).toContain("discount");
+    // Discounts are per-item only — the root schema has none (the scanned
+    // total is the final paid amount, discounts already reflected).
+    expect(schema.properties.discount).toBeUndefined();
+    expect(schema.required).not.toContain("discount");
     const productSchema = schema.properties.products.items;
     expect(productSchema.properties.discount).toEqual({ type: ["number", "null"] });
     expect(productSchema.required).toContain("discount");
@@ -169,7 +171,6 @@ describe("scanReceipt", () => {
 
     expect(result.store).toBeNull(); // blank → null
     expect(result.total).toBeNull(); // 0 → null
-    expect(result.discount).toBeNull(); // negative → null
     expect(result.products).toEqual([
       {
         name: "Bread",

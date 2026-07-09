@@ -28,3 +28,13 @@ body {
 @utility safe-pb {
   padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.5rem);
 }
+
+/* iOS Safari auto-zooms when a focused form control's font-size is below
+   16px; force 16px on mobile so tapping an input never zooms the page. */
+@media (max-width: 767px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}

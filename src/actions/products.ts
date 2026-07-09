@@ -47,40 +47,36 @@ export type ProductFields = {
 const COST_TOLERANCE = 1;
 
 /** Recompute a transaction's status from its product line items: when the sum
- *  of product costs — minus the receipt's general discount (`receipts.discount`),
- *  which reduces the amount paid without belonging to any line — matches the
- *  effective amount (manual `amount`, or the scanned `receipts.total` when no
- *  manual amount exists) it becomes 'ready_to_verify', otherwise 'unverified'.
- *  A manual amount that disagrees with the scanned total (≥ COST_TOLERANCE
- *  apart) is a mismatch — the transaction can never become 'ready_to_verify'
- *  until one of them changes. Applied unconditionally (a 'verified' transaction
- *  can be downgraded). Call after any product add/update/delete. Exported so
- *  the receipt-scan action (`src/actions/receipt.ts`) reuses the same
- *  transition. */
+ *  of product costs matches the effective amount (manual `amount`, or the
+ *  scanned `receipts.total` when no manual amount exists) it becomes
+ *  'ready_to_verify', otherwise 'unverified'. The scanned total is the final
+ *  amount paid with every discount already reflected, and per-product
+ *  discounts are already baked into their costs — nothing is subtracted from
+ *  either side. A manual amount that disagrees with the scanned total (≥
+ *  COST_TOLERANCE apart) is a mismatch — the transaction can never become
+ *  'ready_to_verify' until one of them changes. Applied unconditionally (a
+ *  'verified' transaction can be downgraded). Call after any product
+ *  add/update/delete. Exported so the receipt-scan action
+ *  (`src/actions/receipt.ts`) reuses the same transition. */
 export async function recomputeTransactionStatus(userId: string, transactionId: number) {
   const { rows } = await pool.query<{
     amount: number | null;
     scanned_total: number | null;
-    scanned_discount: number | null;
     cost_total: number;
   }>(
-    `SELECT t.amount, r.total AS scanned_total, r.discount AS scanned_discount,
+    `SELECT t.amount, r.total AS scanned_total,
             COALESCE(SUM(p.cost), 0) AS cost_total
      FROM transactions t
      LEFT JOIN receipts r ON r.transaction_id = t.id
      LEFT JOIN products p ON p.transaction_id = t.id
      WHERE t.id = $1 AND t.user_id = $2
-     GROUP BY t.amount, r.total, r.discount`,
+     GROUP BY t.amount, r.total`,
     [transactionId, userId],
   );
   if (rows.length === 0) return;
   const amount = rows[0].amount ?? null;
   const scanned_total = rows[0].scanned_total ?? null;
-  // Line costs are pre-general-discount, so net the check-wide discount off
-  // before comparing against the (final, paid) effective amount. Per-product
-  // discounts are already baked into their costs.
-  const cost_total =
-    Number(rows[0].cost_total ?? 0) - Number(rows[0].scanned_discount ?? 0);
+  const cost_total = Number(rows[0].cost_total ?? 0);
   const effective = amount ?? scanned_total;
   let status: "ready_to_verify" | "unverified";
   if (

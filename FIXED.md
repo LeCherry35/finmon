@@ -5,6 +5,8 @@ The receipt scan ignored discounts entirely: a discounted line item's saving was
 
 **Fix:** Discounts are read at both levels (0.5.0, migration 013). Per-product: `products.discount` — the money off that line, with `cost` staying the final paid figure (scan schema/prompt/examples instruct this; also manually editable in the product editor). Check-wide: `receipts.discount`, stored next to `total` and reset with it on a new image; since line costs sum pre-that-discount, `recomputeTransactionStatus` (and the modal's total line, rendered as `Total: sum − discount = net`) nets it off before matching the effective amount. Tests cover the scan mapping/schema, receipt-row persistence/reset, and the recompute netting.
 
+> **Partially reverted in 0.5.1** (see `VERSIONS.md`): the check-wide half double-counted in practice — receipts print a final total with every discount already reflected, so the netting broke the `ready_to_verify` match. The scan no longer extracts a check-wide discount and nothing nets anything off; `receipts.discount` stays in the schema as a dormant column. The per-product half stands.
+
 ### ✅ FIXED — Store name and total are parsed from check but dont affect anything
 The scan read the merchant name and grand total off the receipt but discarded them — neither reached the transaction or influenced anything downstream.
 
