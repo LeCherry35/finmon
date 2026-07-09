@@ -30,7 +30,7 @@ the discount may be tied to product or to transaction
 `src/lib/dal.ts:14` does `redirect("/login?stale=1")` and the login page always pushes to `/transactions` afterward. Users trying to reach `/plan` or `/charts` get re-anchored to transactions. Pass a `?next=` param (validated against an allowlist of known routes before redirecting back).
 
 ### Fresh-account empty state has no guidance
-A new user lands on `/transactions` with zero categories. The desktop inline form accepts a free-text `category_name` so it works, but the mobile create sheet and `/plan` show "add a category first" with no further nudge. Either auto-redirect zero-category users to `/categories`, or seed a starter category set in a Better Auth `after-create` hook.
+A new user lands on `/transactions` with zero categories. Creating transactions works (both create forms take a free-text `category_name`, and since 0.4.0 the category is optional entirely), but `/plan` only offers a "No categories yet — add one first" link. Either auto-redirect zero-category users to `/categories`, or seed a starter category set in a Better Auth `after-create` hook.
 
 ### Email HTML escapes `name` but not `url`
 `src/lib/email.ts:23,33` interpolates `${url}` into both an `href` attribute and a paragraph without escaping. Better Auth currently builds safe URLs, but a future change introducing a `"` in the callback path would break the anchor. Run `url` through `escapeHtml` (and ensure callers pre-encode via `encodeURI`).

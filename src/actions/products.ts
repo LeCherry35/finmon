@@ -43,23 +43,48 @@ export type ProductFields = {
 const COST_TOLERANCE = 1;
 
 /** Recompute a transaction's status from its product line items: when the sum
- *  of product costs matches the transaction amount it becomes 'ready_to_verify',
- *  otherwise 'unverified'. Applied unconditionally (a 'verified' transaction can
- *  be downgraded). Call after any product add/update/delete. Exported so the
- *  receipt-scan action (`src/actions/receipt.ts`) reuses the same transition. */
+ *  of product costs matches the effective amount (manual `amount`, or the
+ *  scanned `receipts.total` when no manual amount exists) it becomes
+ *  'ready_to_verify', otherwise 'unverified'. A manual amount that disagrees
+ *  with the scanned total (≥ COST_TOLERANCE apart) is a mismatch — the
+ *  transaction can never become 'ready_to_verify' until one of them changes.
+ *  Applied unconditionally (a 'verified' transaction can be downgraded). Call
+ *  after any product add/update/delete. Exported so the receipt-scan action
+ *  (`src/actions/receipt.ts`) reuses the same transition. */
 export async function recomputeTransactionStatus(userId: string, transactionId: number) {
-  const { rows } = await pool.query<{ amount: number; total: number }>(
-    `SELECT t.amount, COALESCE(SUM(p.cost), 0) AS total
+  const { rows } = await pool.query<{
+    amount: number | null;
+    scanned_total: number | null;
+    cost_total: number;
+  }>(
+    `SELECT t.amount, r.total AS scanned_total, COALESCE(SUM(p.cost), 0) AS cost_total
      FROM transactions t
+     LEFT JOIN receipts r ON r.transaction_id = t.id
      LEFT JOIN products p ON p.transaction_id = t.id
      WHERE t.id = $1 AND t.user_id = $2
-     GROUP BY t.amount`,
+     GROUP BY t.amount, r.total`,
     [transactionId, userId],
   );
   if (rows.length === 0) return;
-  const { amount, total } = rows[0];
-  const status =
-    Math.abs(total - amount) < COST_TOLERANCE ? "ready_to_verify" : "unverified";
+  const amount = rows[0].amount ?? null;
+  const scanned_total = rows[0].scanned_total ?? null;
+  const cost_total = Number(rows[0].cost_total ?? 0);
+  const effective = amount ?? scanned_total;
+  let status: "ready_to_verify" | "unverified";
+  if (
+    amount !== null &&
+    scanned_total !== null &&
+    Math.abs(amount - scanned_total) >= COST_TOLERANCE
+  ) {
+    status = "unverified"; // manual amount disagrees with the receipt
+  } else if (effective === null) {
+    status = "unverified"; // nothing to match the product costs against
+  } else {
+    status =
+      Math.abs(cost_total - effective) < COST_TOLERANCE
+        ? "ready_to_verify"
+        : "unverified";
+  }
   await pool.query(
     "UPDATE transactions SET status = $1 WHERE id = $2 AND user_id = $3",
     [status, transactionId, userId],

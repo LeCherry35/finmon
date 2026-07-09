@@ -3,7 +3,7 @@
 What finmon's tests cover today, and what's still planned. For *how* the tests
 work — stack, mocking seams, fixtures, gotchas — see [`TESTS.md`](./TESTS.md).
 
-**Where we are:** **232 tests + 1 `todo`** across 24 files, all green. Every
+**Where we are:** **252 tests + 1 `todo`** across 24 files, all green. Every
 layer below the UI is unit-tested; the gaps left are a real-Postgres tier, full
 end-to-end flows, and the CI gate.
 
@@ -20,7 +20,7 @@ components.
 | Layer | Files | What the tests pin |
 |-------|-------|--------------------|
 | ✅ Pure logic | `src/lib/{filters,charts,chartData,email,receipt-scan}.test.ts`, `src/components/charts/registry.test.ts` | Filter parsing & URL round-trips, chart bucketing / date math (clock pinned), Recharts pivot, email templating & HTML-escaping, chart/nav registry integrity, and the receipt scanner (OpenAI request shape, json_schema strict mode, mapping line items → product fields, dropping non-positive/unnamed items and the manual-only `description`, missing-key / non-OK / malformed-JSON / bad-shape errors — `fetch` stubbed; plus system-prompt composition: `{{UNITS}}`/`{{EXAMPLES}}` substitution from `receipt-units.json`/`receipt-examples.json`, no `note` leak, the read-once cache, and a missing `receipt-prompt.md` surfacing at scan time rather than on import) |
-| ✅ Server actions | `src/actions/{transactions,categories,plans,products,auth,receipt}.test.ts` | The `FormData` → validate → `pool.query` → `revalidatePath` contract: every validation-rejection branch, the success path, unique-violation handling, and `user_id` tenancy on every write. `transactions` pins the create-time row insert (`RETURNING id` → `lastTxId`, `has_receipt` → `processing`); `products` pins add/update/delete incl. tag parsing and ownership checks; `receipt` pins `scanReceiptForTransaction` — ownership, image validation, insert+recompute+revalidate, the failure path that still clears `processing`, and receipt-image persistence (upsert before the vision call, stored even when the scan fails, a failed store logged but not aborting the scan) |
+| ✅ Server actions | `src/actions/{transactions,categories,plans,products,auth,receipt}.test.ts` | The `FormData` → validate → `pool.query` → `revalidatePath` contract: every validation-rejection branch, the success path, unique-violation handling, and `user_id` tenancy on every write. `transactions` pins the create-time row insert (`RETURNING id` → `lastTxId`, `has_receipt` → `processing`) and the optional amount/category rules (all-blank create/update rejected unless a receipt is staged/stored, category-less create skips the upsert and `/categories` revalidate, blanking the amount triggers a status recompute); `products` pins add/update/delete incl. tag parsing and ownership checks, plus `recomputeTransactionStatus` directly — costs matched against the effective amount (manual, else scanned receipt total), the manual-vs-scanned-total mismatch forcing `unverified`, the nothing-to-match case, and the missing-row no-op; `receipt` pins `scanReceiptForTransaction` — ownership, image validation, insert+recompute+revalidate, the failure path that still clears `processing`, and receipt-image persistence (upsert before the vision call, stored even when the scan fails, a failed store logged but not aborting the scan) |
 | ✅ DB queries (mocked) | `src/db/queries.test.ts` | Generated SQL + param array for each branch (category/month clauses, day-vs-month bucket, empty-month short-circuit), the `getTransactions` products-attach round-trip and receipt LEFT JOIN, `getReceiptImage` (user-scoped, null for missing/foreign), and a sweep asserting every query is scoped by `user_id = $1` |
 | ✅ Middleware & auth gate | `src/proxy.test.ts`, `src/lib/dal.test.ts` | Every redirect branch of the route guard (protected/auth pages, `?stale` cookie clearing) and `requireUser` / `getCurrentUser` |
 | ✅ Route handlers | `src/app/api/receipts/[id]/route.test.ts` | The receipt-image endpoint: 401 without a session (before touching the DB), 404 for bad/missing/foreign ids, and the 200 path's bytes + `Content-Type` + `private, no-store` |
@@ -47,13 +47,9 @@ Highest value for the aggregation queries; medium effort.
 
 ### ☐ Transaction status workflow
 
-The `status` field (migration 009) shipped without tests. Fixtures were updated to
-carry `status`, but nothing pins the behaviour:
+`recomputeTransactionStatus` is now pinned directly (see the server-actions row
+above), but two status surfaces are still untested:
 
-- **`recomputeTransactionStatus`** in `src/actions/products.ts` — assert add/update/
-  delete flip the transaction to `ready_to_verify` when product costs sum to
-  `amount` (within the loose `COST_TOLERANCE` of ±1) and back to `unverified` otherwise, including
-  the `verified` → downgrade case.
 - **`StatusBadge`** in `src/components/TransactionRow.tsx` — label/colour per status
   and the unknown-status fallback to `unverified`.
 - **`verifyTransaction`** in `src/actions/transactions.ts` — the action itself is

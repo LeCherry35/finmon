@@ -112,9 +112,22 @@ export default function TransactionRow({
     });
   }
 
+  // Manual amount wins; a scan-only transaction falls back to the receipt's
+  // scanned total; with neither, an amber pill highlights the gap.
+  const displayAmount = tx.amount ?? tx.scanned_total ?? null;
   const amountClass =
     tx.type === "income" ? "text-emerald-600" : "text-red-500";
-  const amountText = `${tx.type === "income" ? "+" : "-"}${tx.amount.toFixed(2)}`;
+  const amountNode =
+    displayAmount !== null ? (
+      `${tx.type === "income" ? "+" : "-"}${displayAmount.toFixed(2)}`
+    ) : (
+      <span className="inline-flex items-center rounded-full bg-amber-100 text-amber-700 px-2 py-0.5 text-[11px] font-medium font-sans">
+        No amount
+      </span>
+    );
+  const categoryNode = tx.category_name ?? (
+    <span className="text-zinc-400 italic">Uncategorized</span>
+  );
 
   return (
     <>
@@ -130,7 +143,8 @@ export default function TransactionRow({
             confirmDelete={confirmDelete}
             onDelete={handleDelete}
             amountClass={amountClass}
-            amountText={amountText}
+            amountNode={amountNode}
+            categoryNode={categoryNode}
           />
         </td>
       </tr>
@@ -142,7 +156,7 @@ export default function TransactionRow({
         className="hidden md:table-row border-b border-zinc-100 cursor-pointer hover:bg-zinc-50"
       >
         <td className="py-2 pr-2 text-sm text-zinc-500">{tx.date}</td>
-        <td className="py-2 pr-2 text-sm">{tx.category_name}</td>
+        <td className="py-2 pr-2 text-sm">{categoryNode}</td>
         <td className="py-2 pr-2 text-sm text-zinc-500 truncate">
           {tx.store ?? <span className="text-zinc-300">—</span>}
         </td>
@@ -150,7 +164,7 @@ export default function TransactionRow({
           <StatusBadge tx={tx} />
         </td>
         <td className={`py-2 pr-2 text-sm font-mono ${amountClass}`}>
-          {amountText}
+          {amountNode}
         </td>
         <td className="py-2">
           <div className="flex gap-2 justify-end">
@@ -193,7 +207,8 @@ function MobileCard({
   confirmDelete,
   onDelete,
   amountClass,
-  amountText,
+  amountNode,
+  categoryNode,
 }: {
   tx: Transaction;
   expanded: boolean;
@@ -203,7 +218,8 @@ function MobileCard({
   confirmDelete: boolean;
   onDelete: () => void;
   amountClass: string;
-  amountText: string;
+  amountNode: React.ReactNode;
+  categoryNode: React.ReactNode;
 }) {
   return (
     <div className="border-b border-zinc-100">
@@ -223,13 +239,13 @@ function MobileCard({
         aria-expanded={expanded}
       >
         <div className="flex-1 min-w-0">
-          <div className="text-sm truncate">{tx.category_name}</div>
+          <div className="text-sm truncate">{categoryNode}</div>
           <div className="flex items-center gap-2 mt-0.5">
             <span className="text-[11px] text-zinc-400">{formatMobileDate(tx.date)}</span>
             <StatusBadge tx={tx} />
           </div>
         </div>
-        <div className={`text-sm font-mono shrink-0 ${amountClass}`}>{amountText}</div>
+        <div className={`text-sm font-mono shrink-0 ${amountClass}`}>{amountNode}</div>
         <ChevronIcon open={expanded} />
       </div>
       {expanded && (

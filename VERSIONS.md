@@ -8,6 +8,29 @@ Entry shape: `## <version> — <YYYY-MM-DD> — <headline>`, then **Added / Chan
 
 ---
 
+## 0.4.0 — 2026-07-09 — Scan-first transactions: optional amount & category, scanned receipt total
+
+A transaction can now be created from a **receipt photo alone** — amount and category are optional, and the scan fills in what the user left blank. The receipt's printed grand total is stored and used as the fallback amount everywhere until a manual amount exists.
+
+### Added
+- **`receipts.total`** (migration 012) — the grand total as read by the scan. Reset to `NULL` whenever a new image is stored, filled on a successful scan. Exposed as `Transaction.scanned_total` (`getTransactions`).
+- **Scan fills blank fields** — the vision call now also returns a purchase `date` and a best-fit `category` (constrained to the user's own category names — rendered into the prompt *and* enforced as a response-schema enum — with a lazily-created `other` fallback). After a scan, a blank category/store is filled in, and a still-default (today) date is replaced by the receipt's date. A manually entered amount is **never** overwritten.
+- **Verification mismatch guard** — a manual amount that disagrees with the scanned total (≥ ±1) blocks `ready_to_verify`; the modal shows an amber explanation. Verifying a transaction with no manual amount adopts the scanned total, so a verified row always has an amount.
+- **Tests** — optional amount/category rules in `createTransaction`/`updateTransaction`, and direct `recomputeTransactionStatus` coverage (effective-amount fallback, mismatch, nothing-to-match) — suite now 252 tests + 1 todo.
+
+### Changed
+- **`transactions.amount` and `transactions.category_id` are nullable** (migration 012). App-enforced rule on create and edit: at least one of {amount, category, receipt}. The create form/sheet dropped the `required` attributes in favour of a shared client-side guard mirroring the server error.
+- **Status recompute** matches product costs against the *effective* amount — the manual amount, else the scanned total.
+- **Spend aggregations** (`/plan`, `/expenditures`, `/charts`) count a scan-only transaction at `COALESCE(t.amount, r.total)`; the transactions list shows the scanned total as the amount fallback, an amber "No amount" pill with neither, and "Uncategorized" for a missing category.
+
+### Migrations
+- **012** — drop `NOT NULL` on `transactions.amount` / `transactions.category_id`; add `receipts.total`.
+
+### Deploy notes
+- No new env vars or compose changes — `git pull` + `docker compose up -d --build` applies migration 012 on startup. Receipts scanned before 0.4.0 have no stored `total` until re-scanned.
+
+---
+
 ## 0.3.0 — 2026-07-08 — Receipt photo storage
 
 Uploaded receipt photos are now **kept**, not just scanned and discarded. Each scanned transaction stores its (client-downscaled, ~100–300 KB) receipt image and can show it again later.

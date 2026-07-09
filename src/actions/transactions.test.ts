@@ -37,7 +37,9 @@ describe("createTransaction", () => {
     [{ amount: "0", type: "spend", category_name: "Food", date: "2026-06-01" }, "Amount must be positive"],
     [{ amount: "x", type: "spend", category_name: "Food", date: "2026-06-01" }, "Amount must be positive"],
     [{ amount: "10", type: "bogus", category_name: "Food", date: "2026-06-01" }, "Invalid type"],
-    [{ amount: "10", type: "spend", category_name: "", date: "2026-06-01" }, "Category is required"],
+    // amount and category are individually optional, but not all-blank at once
+    // (no receipt staged either)
+    [{ amount: "", type: "spend", category_name: "", date: "2026-06-01" }, "Add an amount, a category, or a receipt photo"],
     [{ amount: "10", type: "spend", category_name: "Food", date: "" }, "Date is required"],
     [{ amount: "10", type: "spend", category_name: "Food", date: "06/01/2026" }, "Date must be YYYY-MM-DD"],
   ])("rejects invalid input (%o)", async (fields, error) => {
@@ -78,6 +80,36 @@ describe("createTransaction", () => {
     expect(query.mock.calls.some(([sql]) => /INSERT INTO products/.test(sql))).toBe(false);
     expect(revalidatePath).toHaveBeenCalledWith("/transactions");
     expect(revalidatePath).toHaveBeenCalledWith("/categories");
+  });
+
+  it("creates without a category: no upsert, null category_id, no /categories revalidate", async () => {
+    query.mockResolvedValueOnce({ rows: [{ id: 42 }] }); // transaction insert only
+
+    const result = await createTransaction(
+      prev,
+      formData({ amount: "12.5", type: "spend", category_name: "", date: "2026-06-01" }),
+    );
+
+    expect(result).toEqual({ successCount: 3, lastTxId: 42 });
+    expect(query).toHaveBeenCalledTimes(1); // no category upsert
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toMatch(/INSERT INTO transactions/);
+    expect(params).toEqual([12.5, "spend", null, "2026-06-01", null, null, "unverified", TEST_USER_ID]);
+    expect(revalidatePath).toHaveBeenCalledWith("/transactions");
+    expect(revalidatePath).not.toHaveBeenCalledWith("/categories");
+  });
+
+  it("creates from a receipt alone: blank amount and category are stored as null", async () => {
+    query.mockResolvedValueOnce({ rows: [{ id: 43 }] }); // transaction insert only
+
+    const result = await createTransaction(
+      prev,
+      formData({ amount: "", type: "spend", category_name: "", date: "2026-06-01", has_receipt: "1" }),
+    );
+
+    expect(result).toEqual({ successCount: 3, lastTxId: 43 });
+    // amount + category null, status 'processing' until the scan fills them in
+    expect(query.mock.calls[0][1]).toEqual([null, "spend", null, "2026-06-01", null, null, "processing", TEST_USER_ID]);
   });
 
   it("starts the row as 'processing' when a receipt is staged (has_receipt)", async () => {
@@ -127,13 +159,39 @@ describe("updateTransaction", () => {
     [{ ...valid, id: "0" }, "Invalid transaction"],
     [{ ...valid, amount: "-1" }, "Amount must be positive"],
     [{ ...valid, type: "nope" }, "Invalid type"],
-    [{ ...valid, category_id: "0" }, "Category is required"],
+    [{ ...valid, category_id: "0" }, "Invalid category"],
     [{ ...valid, date: "" }, "Date is required"],
     [{ ...valid, date: "2026/06/01" }, "Date must be YYYY-MM-DD"],
   ])("rejects invalid input (%o)", async (fields, error) => {
     const result = await updateTransaction(formData(fields));
     expect(result).toEqual({ ok: false, error });
     expect(query).not.toHaveBeenCalled();
+  });
+
+  it("rejects blanking both amount and category when no receipt is stored", async () => {
+    query.mockResolvedValueOnce({ rowCount: 0 }); // receipt existence check
+    const result = await updateTransaction(
+      formData({ ...valid, amount: "", category_id: "" }),
+    );
+    expect(result).toEqual({ ok: false, error: "Add an amount, a category, or a receipt photo" });
+    expect(query).toHaveBeenCalledTimes(1); // no UPDATE issued
+    expect(query.mock.calls[0][0]).toMatch(/FROM receipts/);
+  });
+
+  it("allows blanking both amount and category when a receipt is stored", async () => {
+    query
+      .mockResolvedValueOnce({ rowCount: 1 }) // receipt existence check
+      .mockResolvedValueOnce({ rows: [{ prev_amount: "10.00" }] }) // update (amount moved 10 -> null)
+      .mockResolvedValueOnce({ rows: [{ amount: null, scanned_total: 25, cost_total: "25" }] }) // recompute SELECT
+      .mockResolvedValueOnce({}); // recompute UPDATE
+    const result = await updateTransaction(
+      formData({ ...valid, amount: "", category_id: "" }),
+    );
+    expect(result).toEqual({ ok: true });
+    // amount and category_id land as null (no ownership check without a category)
+    expect(query.mock.calls[1][1]).toEqual([null, "spend", null, "2026-06-01", null, null, 5, TEST_USER_ID]);
+    // blanking the amount counts as an amount change — status recomputed
+    expect(query).toHaveBeenCalledTimes(4);
   });
 
   it("rejects a category the user does not own", async () => {

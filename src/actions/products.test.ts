@@ -14,7 +14,12 @@ vi.mock("@/lib/dal", () => ({
 }));
 vi.mock("next/cache", () => ({ revalidatePath }));
 
-import { addProduct, updateProduct, deleteProduct } from "@/actions/products";
+import {
+  addProduct,
+  updateProduct,
+  deleteProduct,
+  recomputeTransactionStatus,
+} from "@/actions/products";
 
 beforeEach(() => {
   query.mockReset();
@@ -138,6 +143,52 @@ describe("updateProduct", () => {
       TEST_USER_ID,
     ]);
     expect(revalidatePath).toHaveBeenCalledWith("/transactions");
+  });
+});
+
+describe("recomputeTransactionStatus", () => {
+  // Runs the recompute against a single mocked SELECT row and returns the
+  // status it wrote (cost_total arrives as a string — NUMERIC SUM via COALESCE
+  // is not covered by the global float parser in every branch, so the code
+  // Number()s it).
+  async function statusFor(row: {
+    amount: number | null;
+    scanned_total: number | null;
+    cost_total: string;
+  }): Promise<string> {
+    query.mockReset();
+    query.mockResolvedValueOnce({ rows: [row] }).mockResolvedValueOnce({});
+    await recomputeTransactionStatus(TEST_USER_ID, 9);
+    expect(query).toHaveBeenCalledTimes(2);
+    return query.mock.calls[1][1][0];
+  }
+
+  it("is ready_to_verify when costs sum to the manual amount", async () => {
+    expect(await statusFor({ amount: 30, scanned_total: null, cost_total: "30" })).toBe("ready_to_verify");
+  });
+
+  it("is unverified when costs miss the manual amount", async () => {
+    expect(await statusFor({ amount: 30, scanned_total: null, cost_total: "12" })).toBe("unverified");
+  });
+
+  it("falls back to the scanned receipt total when there is no manual amount", async () => {
+    expect(await statusFor({ amount: null, scanned_total: 30, cost_total: "30" })).toBe("ready_to_verify");
+  });
+
+  it("a manual amount that disagrees with the scanned total blocks ready_to_verify", async () => {
+    // costs match the manual amount, but the receipt says otherwise
+    expect(await statusFor({ amount: 30, scanned_total: 45, cost_total: "30" })).toBe("unverified");
+  });
+
+  it("is unverified when there is nothing to match costs against", async () => {
+    expect(await statusFor({ amount: null, scanned_total: null, cost_total: "30" })).toBe("unverified");
+  });
+
+  it("does nothing for a missing/foreign transaction", async () => {
+    query.mockReset();
+    query.mockResolvedValueOnce({ rows: [] });
+    await recomputeTransactionStatus(TEST_USER_ID, 9);
+    expect(query).toHaveBeenCalledTimes(1); // no status UPDATE
   });
 });
 

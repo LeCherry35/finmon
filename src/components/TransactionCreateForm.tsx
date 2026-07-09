@@ -1,10 +1,13 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { createTransaction } from "@/actions/transactions";
 import type { Category } from "@/actions/categories";
 import ReceiptUpload from "@/components/ReceiptUpload";
-import { useReceiptScanCreate } from "@/components/useReceiptScanCreate";
+import {
+  emptyTransactionGuard,
+  useReceiptScanCreate,
+} from "@/components/useReceiptScanCreate";
 
 export default function TransactionCreateForm({
   categories,
@@ -17,6 +20,7 @@ export default function TransactionCreateForm({
     successCount: 0,
   });
   const { receipt, setReceipt } = useReceiptScanCreate(state);
+  const [guardError, setGuardError] = useState<string | null>(null);
 
   const inputCls =
     "border border-zinc-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-zinc-400";
@@ -25,6 +29,15 @@ export default function TransactionCreateForm({
     <form
       key={state.successCount}
       action={formAction}
+      onSubmit={(e) => {
+        const err = emptyTransactionGuard(e.currentTarget, receipt !== null);
+        if (err) {
+          e.preventDefault();
+          setGuardError(err);
+        } else {
+          setGuardError(null);
+        }
+      }}
       className="hidden md:block space-y-2"
     >
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -33,7 +46,6 @@ export default function TransactionCreateForm({
           type="number"
           step="0.01"
           min="0.01"
-          required
           placeholder="Amount"
           className={inputCls}
         />
@@ -44,7 +56,6 @@ export default function TransactionCreateForm({
         <input
           name="category_name"
           list="category-options"
-          required
           placeholder="Category"
           className={inputCls}
         />
@@ -84,7 +95,9 @@ export default function TransactionCreateForm({
           {receipt ? "Scan & add" : "Add"}
         </button>
       </div>
-      {state.error && <p className="text-sm text-red-600">{state.error}</p>}
+      {(guardError ?? state.error) && (
+        <p className="text-sm text-red-600">{guardError ?? state.error}</p>
+      )}
     </form>
   );
 }

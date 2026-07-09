@@ -7,11 +7,15 @@ import rawExamples from "@/lib/receipt-examples.json";
 import rawUnits from "@/lib/receipt-units.json";
 
 /** Result of scanning a receipt image: the parsed line items mapped straight to
- *  product fields, plus the store/total the model read off the receipt (used for
- *  context/logging only — `transactions.amount` stays authoritative). */
+ *  product fields, plus the store, grand total, purchase date and best-fit
+ *  category the model read off the receipt. The scan action stores `total` in
+ *  `receipts.total` and uses the rest to fill in transaction fields the user
+ *  left blank — a manually entered `transactions.amount` stays authoritative. */
 export type ScanResult = {
   store: string | null;
   total: number | null;
+  date: string | null;
+  category: string | null;
   products: ProductFields[];
 };
 
@@ -52,32 +56,56 @@ function renderExamples(examples: ReceiptExample[]): string {
   )}`;
 }
 
-/** Compose + cache the system prompt. Read once on first use, not at import, so a
- *  missing file surfaces as a scan-time error rather than a module-load crash. */
-let cachedSystemPrompt: string | null = null;
-function getSystemPrompt(): string {
-  if (cachedSystemPrompt === null) {
+/** Compose + cache the prompt template with the static substitutions (units,
+ *  examples) baked in. Read once on first use, not at import, so a missing file
+ *  surfaces as a scan-time error rather than a module-load crash. The
+ *  `{{CATEGORIES}}` placeholder is left in — it varies per user, so it's
+ *  substituted per call in `getSystemPrompt`. */
+let cachedPromptTemplate: string | null = null;
+function getPromptTemplate(): string {
+  if (cachedPromptTemplate === null) {
     const template = readFileSync(PROMPT_TEMPLATE_PATH, "utf8");
     const units = UNITS.map((u) => `"${u}"`).join(", ");
     const examples = renderExamples(EXAMPLES);
     const withUnits = template.replace("{{UNITS}}", units);
-    cachedSystemPrompt = (
+    cachedPromptTemplate = (
       withUnits.includes("{{EXAMPLES}}")
         ? withUnits.replace("{{EXAMPLES}}", examples)
         : `${withUnits.trimEnd()}\n\n${examples}`
     ).trim();
   }
-  return cachedSystemPrompt;
+  return cachedPromptTemplate;
+}
+
+function getSystemPrompt(categoryNames: string[]): string {
+  const categories = [...categoryNames.map((n) => JSON.stringify(n)), '"other"'].join(", ");
+  return getPromptTemplate().replace("{{CATEGORIES}}", categories);
+}
+
+/** The user's category names as offered to the model: trimmed, deduped, blanks
+ *  dropped, and the literal "other" fallback excluded (it's appended separately
+ *  everywhere the list is used, so it appears exactly once). */
+function normalizeCategoryNames(names: string[]): string[] {
+  const seen = new Set<string>();
+  for (const raw of names) {
+    const name = raw.trim();
+    if (name.length > 0 && name !== "other") seen.add(name);
+  }
+  return [...seen];
 }
 
 /** Strict structured-output schema. OpenAI strict mode requires every property to
- *  be listed in `required` and optionality expressed as nullable types. */
-const RESPONSE_SCHEMA = {
+ *  be listed in `required` and optionality expressed as nullable types. Built per
+ *  call because `category` is an enum of the user's own category names (plus the
+ *  literal "other" fallback) — the model can only ever answer with one of them. */
+const buildResponseSchema = (categoryNames: string[]) => ({
   type: "object",
   additionalProperties: false,
   properties: {
     store: { type: ["string", "null"] },
     total: { type: ["number", "null"] },
+    date: { type: ["string", "null"] },
+    category: { type: "string", enum: [...categoryNames, "other"] },
     products: {
       type: "array",
       items: {
@@ -106,8 +134,8 @@ const RESPONSE_SCHEMA = {
       },
     },
   },
-  required: ["store", "total", "products"],
-} as const;
+  required: ["store", "total", "date", "category", "products"],
+});
 
 /** Defensive parse of the model's JSON — strict mode should already guarantee the
  *  shape, but never trust the network. Unknown keys are stripped. */
@@ -125,8 +153,13 @@ const ProductSchema = z.object({
 const ResultSchema = z.object({
   store: z.string().nullable().optional(),
   total: z.number().nullable().optional(),
+  date: z.string().nullable().optional(),
+  category: z.string().nullable().optional(),
   products: z.array(ProductSchema),
 });
+
+/** The scanned purchase date is only usable in the transaction's date format. */
+const SCAN_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 const trimOrNull = (s: string | null | undefined): string | null => {
   const t = (s ?? "").trim();
@@ -140,15 +173,23 @@ const positiveOrNull = (n: number | null | undefined): number | null =>
 
 /**
  * Send a receipt image (a `data:` URL) to the OpenAI vision model and return its
- * line items as product fields. One LLM call. Throws on missing API key or a
- * failed/unparseable response — callers surface that as a friendly error.
+ * line items as product fields plus the receipt-level fields (store, total,
+ * date, category). `categoryNames` is the user's category list — it's rendered
+ * into the prompt and enforced as an enum in the response schema, so `category`
+ * is always byte-exact one of the names or the literal "other". One LLM call.
+ * Throws on missing API key or a failed/unparseable response — callers surface
+ * that as a friendly error.
  */
-export async function scanReceipt(imageDataUrl: string): Promise<ScanResult> {
+export async function scanReceipt(
+  imageDataUrl: string,
+  categoryNames: string[],
+): Promise<ScanResult> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     throw new Error("Receipt scanning is unavailable (OPENAI_API_KEY is not set)");
   }
   const model = process.env.OPENAI_MODEL || DEFAULT_MODEL;
+  const categories = normalizeCategoryNames(categoryNames);
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -165,7 +206,7 @@ export async function scanReceipt(imageDataUrl: string): Promise<ScanResult> {
       body: JSON.stringify({
         model,
         messages: [
-          { role: "system", content: getSystemPrompt() },
+          { role: "system", content: getSystemPrompt(categories) },
           {
             role: "user",
             content: [
@@ -176,7 +217,11 @@ export async function scanReceipt(imageDataUrl: string): Promise<ScanResult> {
         ],
         response_format: {
           type: "json_schema",
-          json_schema: { name: "receipt", strict: true, schema: RESPONSE_SCHEMA },
+          json_schema: {
+            name: "receipt",
+            strict: true,
+            schema: buildResponseSchema(categories),
+          },
         },
       }),
     });
@@ -227,9 +272,13 @@ export async function scanReceipt(imageDataUrl: string): Promise<ScanResult> {
     // A line item with no name can't be stored (name is the one required field).
     .filter((p) => p.name.length > 0);
 
+  const date = trimOrNull(parsed.date);
   return {
     store: trimOrNull(parsed.store),
     total: positiveOrNull(parsed.total),
+    // A date in any other format can't be stored on the transaction.
+    date: date !== null && SCAN_DATE_RE.test(date) ? date : null,
+    category: trimOrNull(parsed.category),
     products,
   };
 }

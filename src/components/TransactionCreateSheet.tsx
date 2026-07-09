@@ -4,7 +4,10 @@ import { useActionState, useEffect, useState } from "react";
 import { createTransaction } from "@/actions/transactions";
 import type { Category } from "@/actions/categories";
 import ReceiptUpload from "@/components/ReceiptUpload";
-import { useReceiptScanCreate } from "@/components/useReceiptScanCreate";
+import {
+  emptyTransactionGuard,
+  useReceiptScanCreate,
+} from "@/components/useReceiptScanCreate";
 
 export default function TransactionCreateSheet({
   categories,
@@ -18,6 +21,7 @@ export default function TransactionCreateSheet({
     successCount: 0,
   });
   const { receipt, setReceipt } = useReceiptScanCreate(state);
+  const [guardError, setGuardError] = useState<string | null>(null);
   const [lastSeenSuccess, setLastSeenSuccess] = useState(0);
 
   if (state.successCount !== lastSeenSuccess) {
@@ -83,6 +87,15 @@ export default function TransactionCreateSheet({
             <form
               key={state.successCount}
               action={formAction}
+              onSubmit={(e) => {
+                const err = emptyTransactionGuard(e.currentTarget, receipt !== null);
+                if (err) {
+                  e.preventDefault();
+                  setGuardError(err);
+                } else {
+                  setGuardError(null);
+                }
+              }}
               className="px-4 pb-4 space-y-3"
             >
               <div className="grid grid-cols-2 gap-3">
@@ -92,7 +105,6 @@ export default function TransactionCreateSheet({
                     type="number"
                     step="0.01"
                     min="0.01"
-                    required
                     inputMode="decimal"
                     placeholder="0.00"
                     className={inputCls}
@@ -109,7 +121,6 @@ export default function TransactionCreateSheet({
                 <input
                   name="category_name"
                   list="category-options-sheet"
-                  required
                   placeholder="Category"
                   className={inputCls}
                 />
@@ -150,8 +161,8 @@ export default function TransactionCreateSheet({
                 />
               </Field>
               <input type="hidden" name="has_receipt" value={receipt ? "1" : ""} />
-              {state.error && (
-                <p className="text-sm text-red-600">{state.error}</p>
+              {(guardError ?? state.error) && (
+                <p className="text-sm text-red-600">{guardError ?? state.error}</p>
               )}
               <button
                 type="submit"

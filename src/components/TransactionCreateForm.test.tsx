@@ -31,7 +31,10 @@ beforeEach(() => {
 });
 afterEach(() => vi.clearAllMocks());
 
-describe("TransactionCreateForm receipt scanning", () => {
+// Generous timeout: these tests run a real file upload + canvas/FileReader
+// downscale under jsdom, which can exceed the 5s default when the whole suite
+// runs in parallel on a slow machine.
+describe("TransactionCreateForm receipt scanning", { timeout: 15_000 }, () => {
   it("shows 'Add' until a receipt is staged, then 'Scan & add'", async () => {
     const { container } = renderForm();
     expect(screen.getByRole("button", { name: "Add" })).toBeInTheDocument();

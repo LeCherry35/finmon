@@ -128,12 +128,13 @@ export async function getPlansForMonth(
   const { rows } = await pool.query<PlanEntry>(
     `SELECT c.id AS category_id, c.name AS category_name,
             p.id AS plan_id, p.amount,
-            COALESCE(SUM(CASE WHEN t.type = 'spend' THEN t.amount END), 0) AS spent
+            COALESCE(SUM(CASE WHEN t.type = 'spend' THEN COALESCE(t.amount, r.total) END), 0) AS spent
      FROM categories c
      LEFT JOIN plans p
        ON p.category_id = c.id AND p.month = $2 AND p.user_id = $1
      LEFT JOIN transactions t
        ON t.category_id = c.id AND LEFT(t.date, 7) = $2 AND t.user_id = $1
+     LEFT JOIN receipts r ON r.transaction_id = t.id
      WHERE c.user_id = $1${categoryClause}
      GROUP BY c.id, c.name, c.priority, p.id, p.amount
      ORDER BY c.priority DESC, c.name ASC`,
@@ -170,10 +171,11 @@ export async function getPlansSummary(
        GROUP BY category_id
      ) plan_sum ON plan_sum.category_id = c.id
      LEFT JOIN (
-       SELECT category_id, SUM(amount) AS spent
-       FROM transactions
-       WHERE user_id = $1 AND type = 'spend' AND LEFT(date, 7) = ANY($2::text[])
-       GROUP BY category_id
+       SELECT t.category_id, SUM(COALESCE(t.amount, r.total)) AS spent
+       FROM transactions t
+       LEFT JOIN receipts r ON r.transaction_id = t.id
+       WHERE t.user_id = $1 AND t.type = 'spend' AND LEFT(t.date, 7) = ANY($2::text[])
+       GROUP BY t.category_id
      ) spent_sum ON spent_sum.category_id = c.id
      WHERE c.user_id = $1${categoryClause}
      ORDER BY c.priority DESC, c.name ASC`,
@@ -194,10 +196,14 @@ export async function getExpendituresByCategory(
   const catFilter = anyArrayFilter("t.category_id", f.categoryIds, "int", params);
   if (catFilter) where.push(catFilter);
 
+  // COALESCE: a scan-only transaction (no manual amount yet) still counts at
+  // its scanned receipt total. receipts.transaction_id is UNIQUE — no row
+  // multiplication.
   const { rows } = await pool.query<ExpenditureByCategory>(
-    `SELECT c.id AS category_id, c.name AS category_name, SUM(t.amount) AS total, COUNT(*)::INT AS count
+    `SELECT c.id AS category_id, c.name AS category_name, SUM(COALESCE(t.amount, r.total)) AS total, COUNT(*)::INT AS count
      FROM transactions t
      JOIN categories c ON c.id = t.category_id
+     LEFT JOIN receipts r ON r.transaction_id = t.id
      WHERE ${where.join(" AND ")}
      GROUP BY t.category_id, c.id, c.name
      ORDER BY total DESC`,
@@ -225,9 +231,10 @@ export async function getExpenditureSeries(
             c.name AS category_name,
             c.priority,
             ${bucketExpr} AS bucket,
-            SUM(t.amount)::float8 AS total
+            SUM(COALESCE(t.amount, r.total))::float8 AS total
      FROM transactions t
      JOIN categories c ON c.id = t.category_id
+     LEFT JOIN receipts r ON r.transaction_id = t.id
      WHERE t.user_id = $1
        AND t.type = 'spend'
        AND LEFT(t.date, 7) = ANY($2::text[])
@@ -252,10 +259,12 @@ export async function getTransactions(
   if (catFilter) where.push(catFilter);
 
   // receipts.transaction_id is UNIQUE, so the LEFT JOIN never multiplies rows.
+  // categories is a LEFT JOIN too: a transaction may have no category until a
+  // receipt scan (or the user) fills one in.
   const { rows } = await pool.query<Transaction>(
-    `SELECT t.*, c.name AS category_name, r.id AS receipt_id
+    `SELECT t.*, c.name AS category_name, r.id AS receipt_id, r.total AS scanned_total
      FROM transactions t
-     JOIN categories c ON c.id = t.category_id
+     LEFT JOIN categories c ON c.id = t.category_id
      LEFT JOIN receipts r ON r.transaction_id = t.id
      WHERE ${where.join(" AND ")}
      ORDER BY t.date DESC, t.id DESC`,

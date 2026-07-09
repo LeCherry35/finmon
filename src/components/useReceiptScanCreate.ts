@@ -17,6 +17,22 @@ import type { StagedImage } from "@/components/ReceiptUpload";
  * depending on it (and re-firing when the user merely picks a file); a
  * `handledTx` ref guards against firing twice for the same transaction.
  */
+/** Client-side mirror of `createTransaction`'s at-least-one-of guard: amount
+ *  and category are individually optional (a staged receipt can fill them in),
+ *  but a submit with all three missing gets a friendly error before the
+ *  round-trip. Returns the error message, or null when the form may submit. */
+export function emptyTransactionGuard(
+  form: HTMLFormElement,
+  hasReceipt: boolean,
+): string | null {
+  const fd = new FormData(form);
+  const amount = ((fd.get("amount") as string | null) ?? "").trim();
+  const category = ((fd.get("category_name") as string | null) ?? "").trim();
+  if (!amount && !category && !hasReceipt)
+    return "Add an amount, a category, or a receipt photo";
+  return null;
+}
+
 export function useReceiptScanCreate(state: TransactionFormState) {
   const [receipt, setReceiptState] = useState<StagedImage | null>(null);
   const stagedRef = useRef<StagedImage | null>(null);

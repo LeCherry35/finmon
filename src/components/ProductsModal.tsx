@@ -87,9 +87,14 @@ export default function ProductsModal({
   const products = tx.products ?? [];
   const productCount = products.length;
   const productTotal = products.reduce((s, p) => s + (p.cost ?? 0), 0);
+  // The manual amount when present, else the scanned receipt total — the same
+  // figure recomputeTransactionStatus matches product costs against.
+  const effectiveAmount = tx.amount ?? tx.scanned_total ?? null;
   // Loose ±1 tolerance — must mirror COST_TOLERANCE in src/actions/products.ts,
-  // which drives the ready_to_verify status from the same comparison.
-  const mismatch = Math.abs(productTotal - tx.amount) >= 1;
+  // which drives the ready_to_verify status from the same comparison. With no
+  // amount at all there's nothing to compare against.
+  const mismatch =
+    effectiveAmount !== null && Math.abs(productTotal - effectiveAmount) >= 1;
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center">
@@ -111,7 +116,7 @@ export default function ProductsModal({
               {tx.category_name ?? "Transaction"}
             </h2>
             <p className="text-xs text-zinc-500 truncate">
-              {tx.date} · {tx.amount.toFixed(2)}
+              {tx.date} · {effectiveAmount !== null ? effectiveAmount.toFixed(2) : "no amount"}
             </p>
           </div>
           <button
@@ -153,7 +158,7 @@ export default function ProductsModal({
                 className={`text-xs ${mismatch ? "text-red-600" : "text-emerald-600"}`}
               >
                 Total: {productTotal.toFixed(2)}
-                {mismatch && ` (${tx.amount.toFixed(2)})`}
+                {mismatch && effectiveAmount !== null && ` (${effectiveAmount.toFixed(2)})`}
               </p>
 
               <ReceiptScanner
@@ -182,19 +187,28 @@ function TransactionEditor({
   categories: Category[];
 }) {
   const [editing, setEditing] = useState(false);
-  const [amount, setAmount] = useState(String(tx.amount));
+  const [amount, setAmount] = useState(tx.amount != null ? String(tx.amount) : "");
   const [type, setType] = useState<Transaction["type"]>(tx.type);
-  const [categoryId, setCategoryId] = useState(String(tx.category_id));
+  const [categoryId, setCategoryId] = useState(
+    tx.category_id != null ? String(tx.category_id) : "",
+  );
   const [date, setDate] = useState(tx.date);
   const [note, setNote] = useState(tx.note ?? "");
   const [store, setStore] = useState(tx.store ?? "");
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
+  // A manual amount that disagrees with the scanned receipt total blocks
+  // verification (mirrors COST_TOLERANCE in src/actions/products.ts).
+  const amountMismatch =
+    tx.amount != null &&
+    tx.scanned_total != null &&
+    Math.abs(tx.amount - tx.scanned_total) >= 1;
+
   function syncFromTx() {
-    setAmount(String(tx.amount));
+    setAmount(tx.amount != null ? String(tx.amount) : "");
     setType(tx.type);
-    setCategoryId(String(tx.category_id));
+    setCategoryId(tx.category_id != null ? String(tx.category_id) : "");
     setDate(tx.date);
     setNote(tx.note ?? "");
     setStore(tx.store ?? "");
@@ -245,7 +259,17 @@ function TransactionEditor({
           </button>
         </div>
         <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
-          <Detail label="Amount" value={tx.amount.toFixed(2)} />
+          {tx.amount != null ? (
+            <Detail label="Amount" value={tx.amount.toFixed(2)} />
+          ) : (
+            <div>
+              <dt className="text-[11px] text-zinc-400">Amount</dt>
+              <dd className="text-amber-600">missing</dd>
+            </div>
+          )}
+          {tx.scanned_total != null && (
+            <Detail label="Receipt total" value={tx.scanned_total.toFixed(2)} />
+          )}
           {/* Spend is the default — only surface the type when it's income. */}
           {tx.type === "income" && <Detail label="Type" value="Income" />}
           {tx.category_name && (
@@ -257,6 +281,12 @@ function TransactionEditor({
             <Detail label="Note" value={tx.note} className="col-span-2" />
           )}
         </dl>
+        {amountMismatch && (
+          <p className="text-xs text-amber-600">
+            The amount differs from the scanned receipt total — the transaction
+            can&apos;t be verified until they agree.
+          </p>
+        )}
       </div>
     );
   }
@@ -289,6 +319,7 @@ function TransactionEditor({
           aria-label="Category"
           className={inputCls}
         >
+          <option value="">No category</option>
           {categories.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
