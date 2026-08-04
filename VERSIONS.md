@@ -8,6 +8,19 @@ Entry shape: `## <version> — <YYYY-MM-DD> — <headline>`, then **Added / Chan
 
 ---
 
+## 0.7.0 — 2026-08-04 — Bug reports from the header
+
+### Added
+- **"Report a bug" button** in the header (right of the user menu, all screen sizes, signed-in only). It opens a small modal with a free-text description; submitting saves the report to the new `bug_reports` table along with the reporter's `user_id`, email and a `created_at` timestamp. The modal auto-closes on success; blank or >5000-character messages are rejected inline. There is no in-app admin view yet — reports are read straight from the DB.
+
+### Migrations
+- **`015_bug_reports.sql`** — creates `bug_reports` (`user_id` FK → `"user"` with cascade, denormalized `email`, `message`, `created_at`). Additive only.
+
+### Deploy notes
+- `git pull` + `docker compose up -d --build`; the runner applies `015` on the first request. No new env vars.
+
+---
+
 ## 0.6.0 — 2026-08-03 — Sort transactions by date added; stop dropping unplanned & uncategorized spend
 
 A sort control on `/transactions`, plus two related fixes so spend stops silently disappearing from the plan/expenditure/chart aggregates: unset plans now count as a 0 budget, and category-less spend gets an "Uncategorized" bucket.

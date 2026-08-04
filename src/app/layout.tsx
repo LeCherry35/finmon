@@ -4,6 +4,7 @@ import Link from "next/link";
 import NavLinks from "@/components/NavLinks";
 import MobileBottomNav from "@/components/MobileBottomNav";
 import UserMenu from "@/components/UserMenu";
+import BugReportButton from "@/components/BugReportButton";
 import { getCurrentUser } from "@/lib/dal";
 import "./globals.css";
 
@@ -42,6 +43,7 @@ export default async function RootLayout({
           </Link>
           {authed && <NavLinks />}
           {authed && <UserMenu />}
+          {authed && <BugReportButton />}
         </nav>
         <main
           className={

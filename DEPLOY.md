@@ -257,29 +257,15 @@ Set by `docker-compose.yml` (do **not** put these in `.env`): `NODE_ENV=producti
 
 ## Backups / Restore
 
-Postgres data lives in the named Docker volume `pgdata`, which survives container
-rebuilds and `docker compose down`. It does **not** survive `docker compose down -v`.
+All backup information lives in **[BACKUP.md](BACKUP.md)**: automatic nightly
+dumps (`scripts/backup-db.sh` + cron, one-time setup), manual backups, restore
+commands, off-site copies, and the snapshot inventory.
 
-**Back up** (dump to a file on the host):
-
-```bash
-cd /root/opt/finmon
-docker compose exec -T db pg_dump --no-owner --no-acl -Fc \
-  -U "$SQL_DB_USER" "$SQL_DB_NAME" > "finmon-$(date +%F).dump"
-```
-
-Copy the dump off the server (e.g. `scp` to your machine, or DigitalOcean Spaces).
-Take one before any destructive migration.
-
-> **Latest snapshot:** `backups/finmon-2026-06-29.dump` (gitignored, like the rest
-> of `backups/`) is a custom-format (`pg_dump -Fc`) backup pulled from production on
-> 2026-06-29. Its schema is still at
-> migrations **001–006** (no `products` table, no `status`/`store` columns), so prod
-> predates the 0.2.0 release — restoring it and booting the current app applies
-> **007–010** on top automatically.
-
-**Restore** a dump into a running DB: same `pg_restore` command as in the migration
-section above.
+Short version: Postgres data lives in the named Docker volume `pgdata`, which
+survives container rebuilds and `docker compose down` (but **not**
+`docker compose down -v`); a cron job on the droplet dumps it nightly to
+`backups/auto/` with 14-day retention. Take a manual backup before any deploy
+with a destructive migration.
 
 ---
 

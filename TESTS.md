@@ -192,6 +192,7 @@ Covered client components and what each test pins:
 | `TransactionCreateSheet.test.tsx` | FAB open / Escape / Close, **auto-close on `successCount` bump**, error keeps it open, datalist options |
 | `ChartTabs.test.tsx` | sets/clears `?chart=`, preserves other params, no-op on active tab |
 | `FilterPanel.test.tsx` | open dropdown, month/category toggle → URL params, "all but one" collapse, Clear all, `showCategoryFilter` |
+| `BugReportButton.test.tsx` | open/Escape/Close, submit `FormData` (message), auto-close on `successCount` bump, error keeps it open |
 
 Conventions / gotchas learned here:
 
@@ -224,7 +225,7 @@ with E2E as a separate job behind a Postgres service container.
 
 ## Coverage status
 
-232 tests (1 `todo`) across 24 files. Targeted modules are at/near 100%; overall
+281 tests (1 `todo`) across 27 files. Targeted modules are at/near 100%; overall
 line coverage is dragged down only by server components/pages and infra files
 (`auth.ts`, `db/index.ts`) that aren't unit-tested. (See `TESTS_COVERAGE.md` for
 the full plan.)

@@ -71,6 +71,7 @@ environment variables, and current production trade-offs are in
 
 - [`CLAUDE.md`](./CLAUDE.md) — project overview, entities, conventions.
 - [`DEPLOY.md`](./DEPLOY.md) — DigitalOcean deploy + "Known Limitations & Deferred Work".
+- [`BACKUP.md`](./BACKUP.md) — automatic nightly DB backups, manual backup/restore, snapshot inventory.
 - [`TESTS.md`](./TESTS.md) / [`TESTS_COVERAGE.md`](./TESTS_COVERAGE.md) — how
   testing works and what's covered.
 - [`TO_FIX.md`](./TO_FIX.md) / [`FIXED.md`](./FIXED.md) — audit findings, open

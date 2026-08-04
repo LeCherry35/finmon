@@ -11,6 +11,8 @@ Entities:
 
 Pages: `/transactions` (default landing — list/CRUD), `/categories` (CRUD), `/plan` (current month: planned vs spent vs left, per category), `/expenditures` (spend totals by category, all-time), `/charts` (visualizations — a stacked-area expenditures-over-time chart and a category-share donut, switchable via tabs as more chart types are added).
 
+The signed-in header also carries a **"Report a bug"** button (`src/components/BugReportButton.tsx`, right of the user menu): a modal with a free-text description, saved by `submitBugReport` (`src/actions/bug-reports.ts`) to the `bug_reports` table with the reporter's `user_id`, email and timestamp (migration 015). No in-app admin view — reports are read straight from the DB.
+
 ## Stack
 Next.js 16 (App Router), React 19, PostgreSQL via `pg`, Tailwind v4, TypeScript, Recharts (for `/charts` only). Email/password auth via Better Auth, with per-user multi-tenancy (every row scoped by `user_id`). Path alias `@/` → `src/`.
 
@@ -22,6 +24,7 @@ Migrations, seed scripts, env vars, date-column shapes → `src/db/CLAUDE.md` (a
 
 ## Deployment
 - DigitalOcean Droplet, Docker Compose: app + self-hosted PostgreSQL + nginx reverse proxy on a private network (Postgres data on the `pgdata` volume). nginx terminates TLS on `:443` with Cloudflare in front, so the app is served over HTTPS at its domain; neither the app nor Postgres is published to the host. Built from the repo on the server; deploys are `git pull` + `docker compose up -d --build`.
+- Backups: **BACKUP.md** — nightly `pg_dump` via `scripts/backup-db.sh` + cron on the droplet (14-day retention), plus manual backup/restore commands.
 - Details in DEPLOY.md — including a **"Known Limitations & Deferred Work"** section that consolidates the current prod trade-offs (HTTPS + secure cookies are in place; email-based auth flows remain disabled). Check it before changing auth, cookies, or SSL config.
 
 ## Issue tracking
