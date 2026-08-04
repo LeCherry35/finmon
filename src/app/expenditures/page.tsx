@@ -58,7 +58,7 @@ export default async function ExpendituresPage(
           </thead>
           <tbody>
             {rows.map((row) => (
-              <tr key={row.category_name} className="border-b border-zinc-100">
+              <tr key={row.category_id} className="border-b border-zinc-100">
                 <td className="py-2 pr-4 text-sm">{row.category_name}</td>
                 <td className="py-2 pr-4 text-sm text-right text-zinc-500">{row.count}</td>
                 <td className="py-2 text-sm text-right text-red-600">

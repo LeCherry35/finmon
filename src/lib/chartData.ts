@@ -3,6 +3,16 @@ import type { ExpenditureSeriesRow } from "@/db/queries";
 
 export type SeriesPoint = { bucket: string } & Record<string, string | number>;
 
+/** The per-category key a series occupies in a `SeriesPoint`. Deliberately the
+ *  **id**, not the name: names are only unique among a user's real categories,
+ *  and the synthetic "Uncategorized" bucket (`UNCATEGORIZED_ID`) can collide
+ *  with a real category of that name — which, keyed by name, would silently
+ *  merge the two series into one. Chart components must resolve their Recharts
+ *  `dataKey` through this and pass the display name separately. */
+export function seriesKey(categoryId: number): string {
+  return String(categoryId);
+}
+
 export function pivotForRecharts(
   buckets: string[],
   categories: Category[],
@@ -20,7 +30,7 @@ export function pivotForRecharts(
     const point: SeriesPoint = { bucket: b };
     for (const c of categories) {
       const v = valueByCatBucket.get(c.id)?.get(b) ?? 0;
-      point[c.name] = v;
+      point[seriesKey(c.id)] = v;
     }
     return point;
   });

@@ -8,6 +8,27 @@ Entry shape: `## <version> — <YYYY-MM-DD> — <headline>`, then **Added / Chan
 
 ---
 
+## 0.6.0 — 2026-08-03 — Sort transactions by date added; stop dropping unplanned & uncategorized spend
+
+A sort control on `/transactions`, plus two related fixes so spend stops silently disappearing from the plan/expenditure/chart aggregates: unset plans now count as a 0 budget, and category-less spend gets an "Uncategorized" bucket.
+
+### Added
+- **Sort toggle on `/transactions`** (`src/components/SortToggle.tsx`) — a pill next to the filters flips the list between the transaction's own **date** (default) and **date added** (insertion order). Driven by a `?sort=` URL param (default omitted); it composes with the existing month/category filters rather than clearing them. Backed by a `TransactionSort` arg on `getTransactions` — `"added"` orders by `t.id DESC` (the SERIAL `id` doubles as an insertion timestamp, so no new column/migration was needed).
+- **Zero-value plans** — a plan amount of `0` ("budget nothing here") can now be saved.
+
+### Changed / Fixed
+- **Plan page counts spend against unplanned categories.** Previously, spend in a category with no plan for the month was silently dropped from the month's total and shown as an em-dash. Now a missing (or explicit `0`) plan is treated as a 0 budget: the spend counts toward the total and shows as a negative "left". Applies to both the single-month and multi-month (summary) views.
+- **`upsertPlan`** accepts `0` (blank and negative are still rejected: "Amount is required" / "Amount must be zero or more").
+- **Uncategorized spend no longer vanishes from aggregates.** A spend transaction with no category (possible since 0.4.0's optional category) was invisible on `/plan`, `/expenditures` and `/charts` because every aggregation inner-joined categories. All four now bucket it under an "Uncategorized" sentinel: the expenditure/series queries `LEFT JOIN` + coalesce it (so `/expenditures` shows an "Uncategorized" row and `/charts` an "Uncategorized" series/slice), and the plan views append a synthetic, read-only "Uncategorized" row (no plan can be attached) whenever such spend exists and no category filter is active. No migration. Chart series are now keyed by **category id** rather than name (`seriesKey` in `src/lib/chartData.ts`), so the sentinel can't merge with a real category a user happened to name "Uncategorized"; `/expenditures` rows key off the id for the same reason.
+
+### Migrations
+- **`014_plan_amount_allow_zero.sql`** — relaxes the `plans_amount_check` constraint from `amount > 0` to `amount >= 0`. Applies automatically on startup; no backfill, no data change.
+
+### Deploy notes
+- Migration is additive and non-destructive — `git pull` + `docker compose up -d --build`; the runner applies `014` on the first request. No new env vars.
+
+---
+
 ## 0.5.2 — 2026-07-09 — Lock the mobile viewport: no zoom on input focus
 
 The mobile UI no longer zooms in when tapping a form field (or via pinch/double-tap) — the page stays pinned to the screen width.

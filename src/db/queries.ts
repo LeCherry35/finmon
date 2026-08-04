@@ -4,6 +4,12 @@ import type { Transaction } from "@/actions/transactions";
 import type { Product } from "@/actions/products";
 import type { Bucket } from "@/lib/charts";
 
+// The "Uncategorized" sentinel (id 0 / name "Uncategorized") lives in
+// @/lib/categories, not here — client components need it at runtime and a value
+// import from this module would pull `pg` into the browser bundle. Kept in sync
+// with the literal `0` / `'Uncategorized'` used in the SQL below.
+import { UNCATEGORIZED_ID, UNCATEGORIZED_NAME } from "@/lib/categories";
+
 export type ExpenditureByCategory = {
   category_id: number;
   category_name: string;
@@ -117,6 +123,26 @@ export type PlanEntry = {
   spent: number;
 };
 
+/** Total spend on the user's *uncategorized* transactions across `months`
+ *  (respecting the scan-only `COALESCE(amount, receipt total)`). 0 when there
+ *  are none. Used to synthesize the "Uncategorized" plan/summary row, since the
+ *  category-anchored plan queries can't reach category-less transactions. */
+async function uncategorizedSpent(
+  userId: string,
+  months: string[],
+): Promise<number> {
+  if (months.length === 0) return 0;
+  const { rows } = await pool.query<{ spent: number }>(
+    `SELECT COALESCE(SUM(COALESCE(t.amount, r.total)), 0)::float8 AS spent
+     FROM transactions t
+     LEFT JOIN receipts r ON r.transaction_id = t.id
+     WHERE t.user_id = $1 AND t.type = 'spend' AND t.category_id IS NULL
+       AND LEFT(t.date, 7) = ANY($2::text[])`,
+    [userId, months],
+  );
+  return rows[0]?.spent ?? 0;
+}
+
 export async function getPlansForMonth(
   userId: string,
   month: string,
@@ -140,6 +166,23 @@ export async function getPlansForMonth(
      ORDER BY c.priority DESC, c.name ASC`,
     params,
   );
+
+  // Uncategorized spend never reaches the query above (it joins out from
+  // categories). When no explicit category filter is active — the only case
+  // where uncategorized is in scope, since the filter can't select it — append
+  // a synthetic, non-editable "Uncategorized" row so the spend still counts.
+  if (categoryIds == null) {
+    const spent = await uncategorizedSpent(userId, [month]);
+    if (spent > 0) {
+      rows.push({
+        category_id: UNCATEGORIZED_ID,
+        category_name: UNCATEGORIZED_NAME,
+        plan_id: null,
+        amount: null,
+        spent,
+      });
+    }
+  }
   return rows;
 }
 
@@ -181,6 +224,19 @@ export async function getPlansSummary(
      ORDER BY c.priority DESC, c.name ASC`,
     params,
   );
+
+  // Same uncategorized handling as getPlansForMonth, across the month set.
+  if (categoryIds == null) {
+    const spent = await uncategorizedSpent(userId, months);
+    if (spent > 0) {
+      rows.push({
+        category_id: UNCATEGORIZED_ID,
+        category_name: UNCATEGORIZED_NAME,
+        amount: 0,
+        spent,
+      });
+    }
+  }
   return rows;
 }
 
@@ -196,16 +252,20 @@ export async function getExpendituresByCategory(
   const catFilter = anyArrayFilter("t.category_id", f.categoryIds, "int", params);
   if (catFilter) where.push(catFilter);
 
-  // COALESCE: a scan-only transaction (no manual amount yet) still counts at
-  // its scanned receipt total. receipts.transaction_id is UNIQUE — no row
-  // multiplication.
+  // COALESCE(t.amount, r.total): a scan-only transaction (no manual amount yet)
+  // still counts at its scanned receipt total. receipts.transaction_id is
+  // UNIQUE — no row multiplication. LEFT JOIN categories + COALESCE so spend
+  // with no category collapses into the "Uncategorized" (id 0) bucket rather
+  // than being dropped (an inner join would exclude it).
   const { rows } = await pool.query<ExpenditureByCategory>(
-    `SELECT c.id AS category_id, c.name AS category_name, SUM(COALESCE(t.amount, r.total)) AS total, COUNT(*)::INT AS count
+    `SELECT COALESCE(c.id, 0) AS category_id,
+            COALESCE(c.name, 'Uncategorized') AS category_name,
+            SUM(COALESCE(t.amount, r.total)) AS total, COUNT(*)::INT AS count
      FROM transactions t
-     JOIN categories c ON c.id = t.category_id
+     LEFT JOIN categories c ON c.id = t.category_id
      LEFT JOIN receipts r ON r.transaction_id = t.id
      WHERE ${where.join(" AND ")}
-     GROUP BY t.category_id, c.id, c.name
+     GROUP BY COALESCE(c.id, 0), COALESCE(c.name, 'Uncategorized')
      ORDER BY total DESC`,
     params,
   );
@@ -226,29 +286,37 @@ export async function getExpenditureSeries(
   const cat = anyArrayFilter("t.category_id", categoryIds, "int", params);
   const categoryClause = cat ? ` AND ${cat}` : "";
 
+  // LEFT JOIN + COALESCE so uncategorized spend forms its own "Uncategorized"
+  // (id 0, priority -1 so it sorts last) series instead of being dropped.
   const { rows } = await pool.query<ExpenditureSeriesRow>(
-    `SELECT c.id AS category_id,
-            c.name AS category_name,
-            c.priority,
+    `SELECT COALESCE(c.id, 0) AS category_id,
+            COALESCE(c.name, 'Uncategorized') AS category_name,
+            COALESCE(c.priority, -1) AS priority,
             ${bucketExpr} AS bucket,
             SUM(COALESCE(t.amount, r.total))::float8 AS total
      FROM transactions t
-     JOIN categories c ON c.id = t.category_id
+     LEFT JOIN categories c ON c.id = t.category_id
      LEFT JOIN receipts r ON r.transaction_id = t.id
      WHERE t.user_id = $1
        AND t.type = 'spend'
        AND LEFT(t.date, 7) = ANY($2::text[])
        ${categoryClause}
-     GROUP BY c.id, c.name, c.priority, bucket
-     ORDER BY c.priority DESC, c.name ASC, bucket ASC`,
+     GROUP BY COALESCE(c.id, 0), COALESCE(c.name, 'Uncategorized'), COALESCE(c.priority, -1), bucket
+     ORDER BY priority DESC, category_name ASC, bucket ASC`,
     params,
   );
   return rows;
 }
 
+/** Transaction list ordering. `"date"` sorts by the transaction's own date
+ *  (when it happened); `"added"` sorts by insertion order — `id` is SERIAL, so
+ *  a higher id means added later, no timestamp column needed. */
+export type TransactionSort = "date" | "added";
+
 export async function getTransactions(
   userId: string,
   f: QueryFilters = {},
+  sort: TransactionSort = "date",
 ): Promise<Transaction[]> {
   const where: string[] = ["t.user_id = $1"];
   const params: unknown[] = [userId];
@@ -257,6 +325,8 @@ export async function getTransactions(
   if (monthFilter) where.push(monthFilter);
   const catFilter = anyArrayFilter("t.category_id", f.categoryIds, "int", params);
   if (catFilter) where.push(catFilter);
+
+  const orderBy = sort === "added" ? "t.id DESC" : "t.date DESC, t.id DESC";
 
   // receipts.transaction_id is UNIQUE, so the LEFT JOIN never multiplies rows.
   // categories is a LEFT JOIN too: a transaction may have no category until a
@@ -267,7 +337,7 @@ export async function getTransactions(
      LEFT JOIN categories c ON c.id = t.category_id
      LEFT JOIN receipts r ON r.transaction_id = t.id
      WHERE ${where.join(" AND ")}
-     ORDER BY t.date DESC, t.id DESC`,
+     ORDER BY ${orderBy}`,
     params,
   );
 

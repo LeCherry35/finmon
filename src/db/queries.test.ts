@@ -51,7 +51,8 @@ describe("getAvailableMonths", () => {
 describe("getPlansForMonth", () => {
   it("omits the category clause when no ids are given", async () => {
     await getPlansForMonth(USER, "2026-06");
-    const { sql, params } = lastCall();
+    // calls[0] is the main plan query (a second query fetches uncategorized spend)
+    const [sql, params] = query.mock.calls[0];
     expect(params).toEqual([USER, "2026-06"]);
     expect(sql).not.toMatch(/c\.id = ANY/);
   });
@@ -61,6 +62,37 @@ describe("getPlansForMonth", () => {
     const { sql, params } = lastCall();
     expect(params).toEqual([USER, "2026-06", [1, 2]]);
     expect(sql).toMatch(/AND c\.id = ANY\(\$3::int\[\]\)/);
+  });
+
+  it("appends an Uncategorized row when uncategorized spend exists and no filter", async () => {
+    query
+      .mockResolvedValueOnce({ rows: [{ category_id: 1, category_name: "Food", plan_id: 9, amount: 100, spent: 30 }] }) // main
+      .mockResolvedValueOnce({ rows: [{ spent: 42 }] }); // uncategorized spend
+    const rows = await getPlansForMonth(USER, "2026-06");
+    expect(rows.at(-1)).toEqual({
+      category_id: 0,
+      category_name: "Uncategorized",
+      plan_id: null,
+      amount: null,
+      spent: 42,
+    });
+    // the helper query is user-scoped and targets category-less spend
+    const [sql, params] = query.mock.calls[1];
+    expect(sql).toMatch(/t\.category_id IS NULL/);
+    expect(params).toEqual([USER, ["2026-06"]]);
+  });
+
+  it("omits the Uncategorized row when there is no uncategorized spend", async () => {
+    query
+      .mockResolvedValueOnce({ rows: [{ category_id: 1, category_name: "Food", plan_id: 9, amount: 100, spent: 30 }] })
+      .mockResolvedValueOnce({ rows: [{ spent: 0 }] });
+    const rows = await getPlansForMonth(USER, "2026-06");
+    expect(rows.some((r) => r.category_id === 0)).toBe(false);
+  });
+
+  it("does not query uncategorized spend when a category filter is active", async () => {
+    await getPlansForMonth(USER, "2026-06", [1, 2]);
+    expect(query).toHaveBeenCalledTimes(1); // main query only
   });
 });
 
@@ -73,7 +105,8 @@ describe("getPlansSummary", () => {
 
   it("filters plans and spend by the month list, scoped to the user", async () => {
     await getPlansSummary(USER, ["2026-05", "2026-06"]);
-    const { sql, params } = lastCall();
+    // calls[0] is the main summary query (a second fetches uncategorized spend)
+    const [sql, params] = query.mock.calls[0];
     expect(params).toEqual([USER, ["2026-05", "2026-06"]]);
     expect(sql).toMatch(/month = ANY\(\$2::text\[\]\)/);
     expect(sql).toMatch(/type = 'spend'/);
@@ -84,6 +117,24 @@ describe("getPlansSummary", () => {
     const { sql, params } = lastCall();
     expect(params).toEqual([USER, ["2026-06"], [4]]);
     expect(sql).toMatch(/AND c\.id = ANY\(\$3::int\[\]\)/);
+  });
+
+  it("appends an Uncategorized summary row when uncategorized spend exists", async () => {
+    query
+      .mockResolvedValueOnce({ rows: [{ category_id: 1, category_name: "Food", amount: 100, spent: 30 }] })
+      .mockResolvedValueOnce({ rows: [{ spent: 15 }] });
+    const rows = await getPlansSummary(USER, ["2026-06"]);
+    expect(rows.at(-1)).toEqual({
+      category_id: 0,
+      category_name: "Uncategorized",
+      amount: 0,
+      spent: 15,
+    });
+  });
+
+  it("does not query uncategorized spend when a category filter is active", async () => {
+    await getPlansSummary(USER, ["2026-06"], [4]);
+    expect(query).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -102,6 +153,13 @@ describe("getExpendituresByCategory", () => {
     expect(params).toEqual([USER, ["2026-06"], [1, 2]]);
     expect(sql).toMatch(/LEFT\(t\.date, 7\) = ANY\(\$2::text\[\]\)/);
     expect(sql).toMatch(/t\.category_id = ANY\(\$3::int\[\]\)/);
+  });
+
+  it("LEFT JOINs categories and buckets null category as Uncategorized", async () => {
+    await getExpendituresByCategory(USER);
+    const { sql } = lastCall();
+    expect(sql).toMatch(/LEFT JOIN categories c/);
+    expect(sql).toMatch(/COALESCE\(c\.name, 'Uncategorized'\)/);
   });
 });
 
@@ -124,6 +182,14 @@ describe("getExpenditureSeries", () => {
     expect(sql).toMatch(/LEFT\(t\.date, 7\) AS bucket/);
     expect(sql).toMatch(/AND t\.category_id = ANY\(\$3::int\[\]\)/);
     expect(params).toEqual([USER, ["2026-06"], [9]]);
+  });
+
+  it("LEFT JOINs categories so uncategorized spend forms its own series", async () => {
+    await getExpenditureSeries(USER, ["2026-06"], null, "day");
+    const { sql } = lastCall();
+    expect(sql).toMatch(/LEFT JOIN categories c/);
+    expect(sql).toMatch(/COALESCE\(c\.name, 'Uncategorized'\)/);
+    expect(sql).toMatch(/COALESCE\(c\.priority, -1\)/);
   });
 });
 
@@ -151,6 +217,13 @@ describe("getTransactions", () => {
     expect(sql).toMatch(/r\.id AS receipt_id/);
     expect(sql).toMatch(/ORDER BY t\.date DESC, t\.id DESC/);
     expect(params).toEqual([USER]);
+  });
+
+  it("sorts by insertion order (id) when sort is 'added'", async () => {
+    await getTransactions(USER, {}, "added");
+    const { sql } = lastCall();
+    expect(sql).toMatch(/ORDER BY t\.id DESC/);
+    expect(sql).not.toMatch(/t\.date DESC/);
   });
 
   it("appends month and category filters", async () => {

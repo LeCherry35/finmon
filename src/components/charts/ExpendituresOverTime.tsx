@@ -11,7 +11,7 @@ import {
   YAxis,
 } from "recharts";
 import type { Category } from "@/actions/categories";
-import type { SeriesPoint } from "@/lib/chartData";
+import { seriesKey, type SeriesPoint } from "@/lib/chartData";
 import {
   type Bucket,
   categoryColor,
@@ -96,7 +96,8 @@ export default function ExpendituresOverTime({
                   key={c.id}
                   type="linear"
                   stackId="spend"
-                  dataKey={c.name}
+                  dataKey={seriesKey(c.id)}
+                  name={c.name}
                   stroke={stroke}
                   fill={fill}
                   strokeWidth={1}
@@ -133,7 +134,8 @@ function CrosshairTooltip({
   bucket: Bucket;
 }) {
   if (!active || !payload || payload.length === 0) return null;
-  const valueByName = new Map<string, number>();
+  // Keyed by the series key (the category id), not the name — see seriesKey().
+  const valueByKey = new Map<string, number>();
   for (const item of payload) {
     const key =
       typeof item.dataKey === "string"
@@ -142,11 +144,11 @@ function CrosshairTooltip({
           ? String(item.dataKey)
           : null;
     if (typeof item.value === "number" && key !== null) {
-      valueByName.set(key, item.value);
+      valueByKey.set(key, item.value);
     }
   }
   const spent = categories
-    .map((c) => ({ category: c, value: valueByName.get(c.name) ?? 0 }))
+    .map((c) => ({ category: c, value: valueByKey.get(seriesKey(c.id)) ?? 0 }))
     .filter((row) => row.value > 0);
   const total = spent.reduce((sum, r) => sum + r.value, 0);
 

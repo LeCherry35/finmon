@@ -19,7 +19,7 @@ All DB writes live here. Each file is `"use server"` at the top, reads `FormData
 
 ### Plans use upsert
 
-`upsertPlan` uses `INSERT … ON CONFLICT (category_id, month) DO UPDATE SET amount = EXCLUDED.amount`. One amount per `(category_id, month)` pair — see `src/db/migrations/` for the unique constraint.
+`upsertPlan` uses `INSERT … ON CONFLICT (category_id, month) DO UPDATE SET amount = EXCLUDED.amount`. One amount per `(category_id, month)` pair — see `src/db/migrations/` for the unique constraint. The plan `amount` may be **0** ("budget nothing here") — unlike the transaction/priority validators, it parses the trimmed string and rejects only blank ("Amount is required") or negative ("Amount must be zero or more"), never `Number(get())` directly (blank coerces to `0`, which must not slip through as a zero plan). Migration `014` relaxed the DB `plans_amount_check` from `> 0` to `>= 0` to match. The plan page treats a **missing** plan as 0 too, so spend against an unplanned category still counts (shows as a negative "left") — see the plan page / `PlanRow`.
 
 ### Categories are created on-the-fly from transactions
 

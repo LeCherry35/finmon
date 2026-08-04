@@ -28,11 +28,22 @@ describe("upsertPlan", () => {
     [{ ...valid, month: "" }, "Month is required"],
     [{ ...valid, month: "2026-6" }, "Month must be YYYY-MM"],
     [{ ...valid, month: "2026-06-01" }, "Month must be YYYY-MM"],
-    [{ ...valid, amount: "0" }, "Amount must be positive"],
+    [{ ...valid, amount: "" }, "Amount is required"],
+    [{ ...valid, amount: "-5" }, "Amount must be zero or more"],
   ])("rejects invalid input (%o)", async (fields, error) => {
     const result = await upsertPlan(formData(fields));
     expect(result).toEqual({ ok: false, error });
     expect(query).not.toHaveBeenCalled();
+  });
+
+  it("accepts a plan of 0 (budget nothing here)", async () => {
+    query
+      .mockResolvedValueOnce({ rowCount: 1 }) // ownership check
+      .mockResolvedValueOnce({}); // upsert
+    const result = await upsertPlan(formData({ ...valid, amount: "0" }));
+    expect(result).toEqual({ ok: true });
+    const [, params] = query.mock.calls[1];
+    expect(params).toEqual([3, "2026-06", 0, TEST_USER_ID]);
   });
 
   it("rejects a category the user does not own", async () => {

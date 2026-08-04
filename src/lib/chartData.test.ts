@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { monthTransitionBuckets, pivotForRecharts } from "@/lib/chartData";
+import { monthTransitionBuckets, pivotForRecharts, seriesKey } from "@/lib/chartData";
 import type { Category } from "@/actions/categories";
 import type { ExpenditureSeriesRow } from "@/db/queries";
 
@@ -23,6 +23,8 @@ function row(
 }
 
 describe("pivotForRecharts", () => {
+  // Series are keyed by category id (seriesKey), not name — see the collision
+  // case at the bottom of this block.
   it("produces one wide point per bucket, zero-filling missing categories", () => {
     const points = pivotForRecharts(
       ["2026-06-01", "2026-06-02"],
@@ -30,8 +32,8 @@ describe("pivotForRecharts", () => {
       [row(1, "2026-06-01", 10)],
     );
     expect(points).toEqual([
-      { bucket: "2026-06-01", Food: 10, Rent: 0 },
-      { bucket: "2026-06-02", Food: 0, Rent: 0 },
+      { bucket: "2026-06-01", "1": 10, "2": 0 },
+      { bucket: "2026-06-02", "1": 0, "2": 0 },
     ]);
   });
 
@@ -41,7 +43,7 @@ describe("pivotForRecharts", () => {
       categories,
       [row(1, "2026-06-01", "12.50")],
     );
-    expect(point.Food).toBe(12.5);
+    expect(point[seriesKey(1)]).toBe(12.5);
   });
 
   it("ignores rows for categories not in the list", () => {
@@ -50,7 +52,22 @@ describe("pivotForRecharts", () => {
       categories,
       [row(99, "2026-06-01", 10)],
     );
-    expect(point).toEqual({ bucket: "2026-06-01", Food: 0, Rent: 0 });
+    expect(point).toEqual({ bucket: "2026-06-01", "1": 0, "2": 0 });
+  });
+
+  it("keeps same-named categories as separate series", () => {
+    // The synthetic Uncategorized bucket (id 0) vs. a real category a user
+    // happened to name "Uncategorized" — keyed by name these would merge and
+    // one total would silently overwrite the other.
+    const clashing: Category[] = [
+      { id: 0, name: "Uncategorized", priority: -1 },
+      { id: 7, name: "Uncategorized", priority: 3 },
+    ];
+    const [point] = pivotForRecharts(["2026-06-01"], clashing, [
+      row(0, "2026-06-01", 10),
+      row(7, "2026-06-01", 25),
+    ]);
+    expect(point).toEqual({ bucket: "2026-06-01", "0": 10, "7": 25 });
   });
 
   it("preserves bucket order", () => {

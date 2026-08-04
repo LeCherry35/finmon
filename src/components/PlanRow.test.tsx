@@ -35,6 +35,23 @@ const unplanned: PlanEntry = {
   spent: 0,
 };
 
+const unplannedWithSpend: PlanEntry = {
+  category_id: 6,
+  category_name: "Snacks",
+  plan_id: null,
+  amount: null,
+  spent: 40,
+};
+
+// The synthetic "Uncategorized" row (category_id 0) surfaced by getPlansForMonth.
+const uncategorized: PlanEntry = {
+  category_id: 0,
+  category_name: "Uncategorized",
+  plan_id: null,
+  amount: null,
+  spent: 25,
+};
+
 beforeEach(() => upsertPlan.mockReset());
 afterEach(() => vi.clearAllMocks());
 
@@ -45,9 +62,28 @@ describe("PlanRow", () => {
     expect(screen.getByText("500.00")).toBeInTheDocument(); // planned amount
   });
 
-  it("renders an em dash for left when the category has no plan", () => {
+  it("treats a missing plan as 0, so left is 0.00 with no spend", () => {
     renderRow(unplanned);
-    expect(screen.getByText("—")).toBeInTheDocument();
+    expect(screen.getByText("0.00")).toBeInTheDocument();
+  });
+
+  it("shows spend against an unplanned category as a negative left", () => {
+    renderRow(unplannedWithSpend);
+    expect(screen.getByText("-40.00")).toBeInTheDocument(); // 0 - 40
+  });
+
+  it("renders the Uncategorized row read-only: negative left, no plan input", () => {
+    renderRow(uncategorized);
+    expect(screen.getByText("Uncategorized")).toBeInTheDocument();
+    expect(screen.getByText("-25.00")).toBeInTheDocument(); // 0 - 25
+    // no amount input and no edit affordance — you can't budget "no category"
+    expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Save" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Change planned amount" }),
+    ).not.toBeInTheDocument();
   });
 
   it("shows the amount input immediately for an unplanned row (no Edit needed)", () => {
@@ -78,6 +114,17 @@ describe("PlanRow", () => {
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
     await userEvent.type(screen.getByRole("spinbutton"), "10");
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  });
+
+  it("allows saving an explicit 0 plan", async () => {
+    upsertPlan.mockResolvedValue({ ok: true });
+    renderRow(unplanned);
+    await userEvent.type(screen.getByRole("spinbutton"), "0");
+    const save = screen.getByRole("button", { name: "Save" });
+    expect(save).toBeEnabled();
+    await userEvent.click(save);
+    await waitFor(() => expect(upsertPlan).toHaveBeenCalledTimes(1));
+    expect((upsertPlan.mock.calls[0][0] as FormData).get("amount")).toBe("0");
   });
 
   it("lets a planned row switch to editing and revert via Cancel", async () => {

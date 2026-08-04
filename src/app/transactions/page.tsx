@@ -10,6 +10,8 @@ import TransactionRow from "@/components/TransactionRow";
 import TransactionCreateForm from "@/components/TransactionCreateForm";
 import TransactionCreateSheet from "@/components/TransactionCreateSheet";
 import FilterPanel from "@/components/FilterPanel";
+import SortToggle from "@/components/SortToggle";
+import type { TransactionSort } from "@/db/queries";
 import { parseFilters, resolveFilters } from "@/lib/filters";
 
 export default async function TransactionsPage(
@@ -25,11 +27,16 @@ export default async function TransactionsPage(
   ]);
 
   const resolved = resolveFilters(filters);
+  const sort: TransactionSort = sp.sort === "added" ? "added" : "date";
 
-  const transactions = await getTransactions(userId, {
-    months: resolved.months,
-    categoryIds: resolved.categoryIds,
-  });
+  const transactions = await getTransactions(
+    userId,
+    {
+      months: resolved.months,
+      categoryIds: resolved.categoryIds,
+    },
+    sort,
+  );
 
   const today = new Date().toISOString().slice(0, 10);
 
@@ -42,6 +49,7 @@ export default async function TransactionsPage(
           categories={categories}
           selected={filters}
         />
+        <SortToggle sort={sort} />
       </div>
 
       <TransactionCreateForm categories={categories} today={today} />

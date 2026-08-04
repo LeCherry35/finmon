@@ -90,10 +90,9 @@ async function SingleMonthPlan({
 }) {
   const rows = await getPlansForMonth(userId, month, categoryIds);
   const total = rows.reduce((sum, r) => sum + (r.amount ?? 0), 0);
-  const totalSpent = rows.reduce(
-    (sum, r) => sum + (r.plan_id !== null ? Number(r.spent) : 0),
-    0,
-  );
+  // Count spend from every category, including those with no plan (treated as a
+  // plan of 0) — otherwise spend against an unplanned category vanishes.
+  const totalSpent = rows.reduce((sum, r) => sum + Number(r.spent), 0);
   const totalLeft = total - totalSpent;
 
   return (
@@ -155,28 +154,20 @@ async function MultiMonthPlan({
       </thead>
       <tbody>
         {rows.map((row) => {
+          // No plan across the selected months counts as 0, so spend still
+          // shows as a negative "left".
           const planned = Number(row.amount);
           const spent = Number(row.spent);
-          const left = planned > 0 ? planned - spent : null;
+          const left = planned - spent;
           return (
             <tr key={row.category_id} className="border-b border-zinc-100">
               <td className="py-2 pr-4 text-sm">{row.category_name}</td>
               <td className="py-2 px-4 text-sm text-right">
-                {left !== null ? (
-                  <span className={left >= 0 ? "text-emerald-600" : "text-red-500"}>
-                    {left.toFixed(2)}
-                  </span>
-                ) : (
-                  <span className="text-zinc-300">—</span>
-                )}
+                <span className={left >= 0 ? "text-emerald-600" : "text-red-500"}>
+                  {left.toFixed(2)}
+                </span>
               </td>
-              <td className="py-2 text-sm text-right">
-                {planned > 0 ? (
-                  planned.toFixed(2)
-                ) : (
-                  <span className="text-zinc-300">—</span>
-                )}
-              </td>
+              <td className="py-2 text-sm text-right">{planned.toFixed(2)}</td>
             </tr>
           );
         })}
