@@ -18,6 +18,7 @@ is served over **HTTPS** at its domain (`https://finmon.uk`).
 | App container | `app` service | Built from `Dockerfile`, internal `:3000`, **not** published to the host |
 | Database | `db` service | `postgres:18-alpine`, data on the `pgdata` volume |
 | Reverse proxy | `nginx` service | Terminates TLS on `:443` (redirects `:80`), proxies to `app:3000` |
+| MCP server | separate compose stack | Fronted at `wsdb.finmon.uk` via `nginx/conf.d/wsdb.conf`; reached over the shared external `edge` network |
 | TLS / DNS | Cloudflare | Proxied DNS, SSL/TLS **Full (strict)**, Origin Certificate on nginx |
 | Source of truth | this git repo | Cloned onto the server; deploys are `git pull` + rebuild |
 
@@ -114,7 +115,19 @@ for the app automatically — don't put those in `.env`.
    to the project domain — if yours differs, update both `server_name` lines in the
    repo and `git pull` on the server.
 
+4. **Subdomains** — the Origin Certificate above is a `*.finmon.uk` wildcard, so any
+   subdomain (e.g. `wsdb.finmon.uk`, which fronts the MCP server) needs only its own
+   **A** record, Proxied, and an nginx server block. There is no certbot, no ACME and
+   nothing to renew.
+
 ### Step 6 — Build and start
+
+The `nginx` service joins an external `edge` network shared with the MCP server's separate
+compose stack, so create it **once** before the first `up` or compose will refuse to start:
+
+```bash
+docker network create edge
+```
 
 ```bash
 docker compose up -d --build

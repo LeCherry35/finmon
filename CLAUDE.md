@@ -24,6 +24,7 @@ Migrations, seed scripts, env vars, date-column shapes → `src/db/CLAUDE.md` (a
 
 ## Deployment
 - DigitalOcean Droplet, Docker Compose: app + self-hosted PostgreSQL + nginx reverse proxy on a private network (Postgres data on the `pgdata` volume). nginx terminates TLS on `:443` with Cloudflare in front, so the app is served over HTTPS at its domain; neither the app nor Postgres is published to the host. Built from the repo on the server; deploys are `git pull` + `docker compose up -d --build`.
+- nginx also fronts an **MCP server** that runs in a separate compose stack on the same droplet, at `wsdb.finmon.uk` (`nginx/conf.d/wsdb.conf`). The two stacks meet on an external `edge` Docker network that must exist before `docker compose up` (`docker network create edge`). TLS is the same Cloudflare Origin Certificate — it's a `*.finmon.uk` wildcard, so subdomains need no cert work.
 - Backups: **BACKUP.md** — nightly `pg_dump` via `scripts/backup-db.sh` + cron on the droplet (14-day retention), plus manual backup/restore commands.
 - Details in DEPLOY.md — including a **"Known Limitations & Deferred Work"** section that consolidates the current prod trade-offs (HTTPS + secure cookies are in place; email-based auth flows remain disabled). Check it before changing auth, cookies, or SSL config.
 

@@ -52,6 +52,18 @@ services:
     volumes:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - ./nginx/certs:/etc/nginx/certs:ro
+    networks:
+      # `edge` is an external network shared with the MCP server's separate compose
+      # stack, so nginx can proxy wsdb.finmon.uk to it. Naming any network here
+      # disables the implicit `default` join, so `default` must be listed explicitly.
+      - default
+      - edge
 
 volumes:
   pgdata:
+
+networks:
+  # Created out-of-band on the server (`docker network create edge`) because it is shared
+  # with another compose project; `docker compose up` will fail if it does not exist.
+  edge:
+    external: true
