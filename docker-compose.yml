@@ -39,7 +39,43 @@ services:
       SQL_DB_HOST: db
       SQL_DB_PORT: "5432"
       SQL_DB_SSL: "false"
+      # In-app assistant (see the opencode service). Unset OPENCODE_URL to hide it.
+      OPENCODE_URL: http://opencode:4096
+      AGENT_MCP_URL: http://app:3000/api/agent/mcp
+      AGENT_WORKSPACE_ROOT: /agents
+    volumes:
+      # Per-user opencode configs (each holds that user's MCP token). Written
+      # here, mounted read-only into opencode.
+      - agent-workspaces:/agents
+    networks:
+      - default
+      - agent
     # No public port: the app is reachable only by nginx over the private network.
+
+  # The assistant's agent runtime. Only on the `agent` network: it can reach the
+  # app (for the finmon MCP tools) and the internet (LLM API), but not Postgres.
+  # Locked down to finmon tools only — see src/lib/opencode.ts and DEPLOY.md.
+  opencode:
+    build: ./opencode
+    restart: unless-stopped
+    environment:
+      OPENCODE_SERVER_PASSWORD: ${OPENCODE_SERVER_PASSWORD:?set OPENCODE_SERVER_PASSWORD in .env}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes:
+      - agent-workspaces:/agents:ro
+      - opencode-data:/home/agent/.local/share/opencode
+    tmpfs:
+      - /tmp
+      - /home/agent/.cache:uid=1001,gid=1001
+      - /home/agent/.local/state:uid=1001,gid=1001
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - agent
 
   nginx:
     image: nginx:alpine
@@ -61,8 +97,13 @@ services:
 
 volumes:
   pgdata:
+  agent-workspaces:
+  # opencode's own storage: chat history lives here (finmon keeps no copy).
+  opencode-data:
 
 networks:
+  # App <-> opencode only; Postgres is not on it.
+  agent:
   # Created out-of-band on the server (`docker network create edge`) because it is shared
   # with another compose project; `docker compose up` will fail if it does not exist.
   edge:

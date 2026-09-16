@@ -1,8 +1,8 @@
 # DigitalOcean Deployment Guide
 
 This project is deployed on a single **DigitalOcean Droplet** running **Docker Compose**.
-Three containers: the Next.js app, a **PostgreSQL** database, and an **nginx** reverse
-proxy, on a private Docker network. The app is built from this repo on the server. nginx
+Four containers: the Next.js app, a **PostgreSQL** database, an **nginx** reverse
+proxy, and the **opencode** agent sidecar for the in-app assistant, on private Docker networks. The app is built from this repo on the server. nginx
 terminates TLS on `:443` and proxies to the app; **Cloudflare** sits in front, so the app
 is served over **HTTPS** at its domain (`https://finmon.uk`).
 
@@ -17,6 +17,7 @@ is served over **HTTPS** at its domain (`https://finmon.uk`).
 | Orchestration | Docker Compose | `docker-compose.yml` in repo root |
 | App container | `app` service | Built from `Dockerfile`, internal `:3000`, **not** published to the host |
 | Database | `db` service | `postgres:18-alpine`, data on the `pgdata` volume |
+| Assistant | `opencode` service | Built from `opencode/Dockerfile`, internal `:4096`, only on the `agent` network (reaches `app`, not `db`); read-only, no capabilities; chat history on the `opencode-data` volume |
 | Reverse proxy | `nginx` service | Terminates TLS on `:443` (redirects `:80`), proxies to `app:3000` |
 | MCP server | separate compose stack | Fronted at `wsdb.finmon.uk` via `nginx/conf.d/wsdb.conf`; reached over the shared external `edge` network |
 | TLS / DNS | Cloudflare | Proxied DNS, SSL/TLS **Full (strict)**, Origin Certificate on nginx |
@@ -92,6 +93,9 @@ Set at minimum:
 - `BETTER_AUTH_URL` — `https://<your-domain>` (e.g. `https://finmon.uk`). Must match
   the domain so secure cookies and redirects work.
 - `OPENAI_API_KEY` — optional, enables receipt scanning.
+- `OPENCODE_SERVER_PASSWORD` — `openssl rand -base64 32`. **Required** (compose won't
+  start without it); the app uses it to talk to the `opencode` container.
+- `AGENT_MODEL` — the assistant's model, e.g. `opencode/big-pickle` (free, no key).
 
 The compose file sets `SQL_DB_HOST=db`, `SQL_DB_PORT=5432`, and `SQL_DB_SSL=false`
 for the app automatically — don't put those in `.env`.
@@ -133,8 +137,8 @@ docker network create edge
 docker compose up -d --build
 ```
 
-Compose builds the app image, starts Postgres, waits until it's healthy, then starts
-the app. On first request the app runs all pending migrations in `src/db/migrations/`
+Compose builds the app and opencode images, starts Postgres, waits until it's healthy, then starts
+the app and opencode. On first request the app runs all pending migrations in `src/db/migrations/`
 (via `src/instrumentation.ts`), each in its own transaction.
 
 > **Fresh DB, no data import**: you'll register the first account through `/register`.
@@ -159,8 +163,10 @@ git pull
 docker compose up -d --build
 ```
 
-Compose rebuilds the app image and recreates only the `app` container (Postgres and
-its volume are untouched). New migrations run automatically on the next request.
+Compose rebuilds the images and recreates changed containers (Postgres and its
+volume are untouched). New migrations run automatically on the next request.
+nginx bind-mounts `nginx/conf.d`, so after a change there run
+`docker compose restart nginx`.
 
 ### Optional convenience script
 
@@ -262,9 +268,15 @@ Set in `.env` on the server (template: `.env.production.example`).
 | `BETTER_AUTH_URL` | yes | Full HTTPS origin, `https://<your-domain>` (e.g. `https://finmon.uk`). Must match the domain so secure cookies and OAuth/redirects resolve correctly. |
 | `OPENAI_API_KEY` | optional | Enables receipt scanning. Without it, scans return a friendly error and transactions work unchanged. |
 | `OPENAI_MODEL` | optional | Vision model, default `gpt-4o-mini`. |
+| `OPENCODE_SERVER_PASSWORD` | yes | Basic-auth password between the app and the `opencode` container (`openssl rand -base64 32`). Passed to both by compose. |
+| `AGENT_MODEL` | optional | Assistant model as `provider/model`. Default `openai/gpt-4.1-mini` (uses `OPENAI_API_KEY`). Free, no key: `opencode/big-pickle`. `anthropic/*` needs `ANTHROPIC_API_KEY`. |
+| `ANTHROPIC_API_KEY` | optional | Only for `anthropic/*` models. |
+| `AGENT_TOKEN_SECRET` | optional | HMAC secret for the per-user MCP tokens; defaults to `BETTER_AUTH_SECRET`. |
 
 Set by `docker-compose.yml` (do **not** put these in `.env`): `NODE_ENV=production`,
-`SQL_DB_HOST=db`, `SQL_DB_PORT=5432`, `SQL_DB_SSL=false`.
+`SQL_DB_HOST=db`, `SQL_DB_PORT=5432`, `SQL_DB_SSL=false`, and for the assistant
+`OPENCODE_URL=http://opencode:4096`, `AGENT_MCP_URL=http://app:3000/api/agent/mcp`,
+`AGENT_WORKSPACE_ROOT=/agents`.
 
 ---
 
@@ -289,6 +301,7 @@ cd /root/opt/finmon
 docker compose ps                 # container status / health
 docker compose logs -f app        # app logs (follow)
 docker compose logs -f db         # Postgres logs
+docker compose logs -f opencode   # assistant runtime logs
 docker compose logs --tail=200 app
 ```
 
@@ -308,4 +321,7 @@ HTTPS is in place (Cloudflare + nginx) and session cookies are `Secure`
 
 | Limitation | Where | Why / current state | Resolved by |
 |---|---|---|---|
+| **Assistant rate limit is per process** | `src/actions/agent.ts` | 10 prompts/min per user, kept in memory — resets on restart, not shared across replicas. Fine for one app container. | A DB- or Redis-backed limiter if the app scales out. |
+| **Assistant model is external** | `AGENT_MODEL` | Prompts and the finance data the tools return go to the model provider (OpenCode Zen for `opencode/*` free models). Free models have their own data terms — check them. | Pick a provider/model whose data policy fits. |
+| **opencode version pinned** | `opencode/Dockerfile` (`OPENCODE_VERSION`) | The tool lockdown was verified against 1.18.28; `assertToolLockdown` fails closed if a new version changes the resolved permissions. | Bump deliberately and re-test the chat. |
 | **Email auth flows disabled** | `src/lib/auth.ts` (commented hooks), `src/lib/email.ts` | Email verification, password reset, and verification emails are commented out — sign-up has no verification gate and auto signs in. | Re-enable the commented Better Auth hooks once `RESEND_API_KEY` / `RESEND_FROM_EMAIL` are set. |

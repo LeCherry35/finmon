@@ -247,7 +247,8 @@ describe("deleteTransaction", () => {
     expect(revalidatePath).toHaveBeenCalledWith("/transactions");
   });
 
-  // TO_FIX: deleteTransaction does not validate the id before querying, unlike
-  // its siblings. Pin the desired behavior here once the guard is added.
-  it.todo("rejects a non-positive / NaN id without querying");
+  it.each(["0", "-1", "abc", ""])("rejects a non-positive / NaN id (%j) without querying", async (id) => {
+    await deleteTransaction(formData({ id }));
+    expect(query).not.toHaveBeenCalled();
+  });
 });

@@ -18,8 +18,8 @@ import {
   addProduct,
   updateProduct,
   deleteProduct,
-  recomputeTransactionStatus,
 } from "@/actions/products";
+import { recomputeTransactionStatus } from "@/lib/mutations/products";
 
 beforeEach(() => {
   query.mockReset();

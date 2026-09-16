@@ -16,7 +16,7 @@ vi.mock("@/lib/receipt-scan", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/receipt-scan")>()),
   scanReceipt,
 }));
-vi.mock("@/actions/products", () => ({ insertProducts, recomputeTransactionStatus }));
+vi.mock("@/lib/mutations/products", () => ({ insertProducts, recomputeTransactionStatus }));
 vi.mock("@/db/queries", () => ({ userOwnsTransaction }));
 vi.mock("@/lib/dal", () => ({ requireUser: vi.fn(async () => ({ id: TEST_USER_ID })) }));
 vi.mock("next/cache", () => ({ revalidatePath }));

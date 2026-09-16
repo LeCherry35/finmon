@@ -5,7 +5,7 @@ import { pool } from "@/db";
 import { userOwnsTransaction } from "@/db/queries";
 import { requireUser } from "@/lib/dal";
 import { isPlausibleScanDate, scanReceipt } from "@/lib/receipt-scan";
-import { insertProducts, recomputeTransactionStatus } from "@/actions/products";
+import { insertProducts, recomputeTransactionStatus } from "@/lib/mutations/products";
 import type { ActionResult } from "@/actions/transactions";
 
 /**

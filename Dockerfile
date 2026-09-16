@@ -37,6 +37,9 @@ COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/src/db/migrations ./src/db/migrations
+# Mount point for the assistant's per-user opencode configs; created here so the
+# fresh named volume inherits nextjs ownership.
+RUN mkdir -p /agents && chown nextjs:nodejs /agents
 
 USER nextjs
 

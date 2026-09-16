@@ -40,9 +40,6 @@ A new user lands on `/transactions` with zero categories. Creating transactions 
 ### Migration 006 won't update an existing owner password on re-run
 `src/db/migrations/006_backfill_owner_and_lock.sql` inserts the `account` row with `ON CONFLICT ("id") DO NOTHING`. Rotating `OWNER_PASSWORD_HASH` and re-running migrations is a silent no-op — the new hash is ignored. Probably intentional (one-time backfill; rotate via the forgot-password flow) but worth a comment in the migration.
 
-### `deleteTransaction` skips id validation and returns nothing
-`src/actions/transactions.ts:158` (`deleteTransaction`) reads `id = Number(formData.get("id"))` and runs `DELETE … WHERE id = $1 AND user_id = $2` without checking `!Number.isFinite(id) || id <= 0`. Compare to `updateTransaction` which validates. Also returns implicit `void` while sibling actions return `ActionResult`. Today the form always sends a valid id, so it's latent — but inconsistent with the rest of the file.
-
 ### Migration runner has no advisory lock — concurrent startup can race
 `src/instrumentation-node.ts` (`migrate()`, invoked from `src/instrumentation.ts`'s `register()`) checks `_migrations`, then applies each pending file. If more than one container/task boots concurrently against the same database (rolling deploy or scaling to >1 task), two runners can both see a migration as not-done and race to apply it. Most statements are `IF NOT EXISTS`-safe, but `ALTER … ADD CONSTRAINT` (e.g. migration 006) and the `INSERT INTO _migrations (name)` PK are not — the loser's transaction rolls back and that task crashes at startup. Latent today because prod runs a single ephemeral task (see `DEPLOY.md`), but it becomes real the moment the deploy fans out. Fix: take a `pg_advisory_xact_lock(<const>)` (or session-level `pg_advisory_lock`) before the apply loop so runners serialize.
 

@@ -8,6 +8,30 @@ Entry shape: `## <version> — <YYYY-MM-DD> — <headline>`, then **Added / Chan
 
 ---
 
+## 0.10.0 — 2026-09-17 — AI assistant
+
+### Added
+- **Assistant chat** — a chat button in the header opens a panel (full screen on mobile, side panel on desktop). The agent is opencode, run as a sidecar container. It answers questions about your own transactions, categories, spend and plans, and can propose changes: create/update/delete/verify transactions, add/update/delete products, create/update categories, set plans.
+- **Every change needs your approval** — the agent never writes. A proposed change appears as a card with Accept/Reject; only Accept applies it, through the same validation as the normal UI.
+- **Locked down** — the agent's only tools are finmon's (served as an MCP endpoint at `/api/agent/mcp`, private, per-user token). No shell, files or web. finmon checks this before every prompt and disables the chat if the config doesn't match.
+- Previous chats can be reopened; history is stored by opencode.
+
+### Changed
+- Write logic for transactions, products, categories and plans moved to `src/lib/mutations/*`; the server actions are thin wrappers (no behaviour change).
+
+### Fixed
+- `deleteTransaction` validates the id.
+
+### Migrations
+- `016_agent.sql` — `agent_chats`, `agent_proposals`.
+
+### Deploy notes
+- New `opencode` service, `agent` network and `agent-workspaces` / `opencode-data` volumes in `docker-compose.yml`.
+- **Required in `.env`:** `OPENCODE_SERVER_PASSWORD` (compose refuses to start without it). Set `AGENT_MODEL` (e.g. free `opencode/big-pickle`; default `openai/gpt-4.1-mini` needs `OPENAI_API_KEY`).
+- nginx now returns 404 for `/api/agent/` — restart nginx to pick it up.
+
+---
+
 ## 0.9.0 — 2026-09-16 — Transaction text search
 
 ### Added

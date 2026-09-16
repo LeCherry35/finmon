@@ -378,3 +378,44 @@ export async function getTransactions(
   for (const t of rows) t.products = byTx.get(t.id) ?? [];
   return rows;
 }
+
+/** One transaction by id with its products, scoped to `userId` — the same
+ *  shape as a `getTransactions` row. Null when missing or foreign. Used by the
+ *  agent's tools. */
+export async function getTransaction(
+  userId: string,
+  id: number,
+): Promise<Transaction | null> {
+  const { rows } = await pool.query<Transaction>(
+    `SELECT t.*, c.name AS category_name, r.id AS receipt_id, r.total AS scanned_total
+     FROM transactions t
+     LEFT JOIN categories c ON c.id = t.category_id
+     LEFT JOIN receipts r ON r.transaction_id = t.id
+     WHERE t.user_id = $1 AND t.id = $2`,
+    [userId, id],
+  );
+  if (!rows[0]) return null;
+  const { rows: products } = await pool.query<Product>(
+    "SELECT * FROM products WHERE user_id = $1 AND transaction_id = $2 ORDER BY id ASC",
+    [userId, id],
+  );
+  return { ...rows[0], products };
+}
+
+/** One product line item by id, scoped to `userId`. Null when missing or foreign. */
+export async function getProduct(userId: string, id: number): Promise<Product | null> {
+  const { rows } = await pool.query<Product>(
+    "SELECT * FROM products WHERE user_id = $1 AND id = $2",
+    [userId, id],
+  );
+  return rows[0] ?? null;
+}
+
+/** One category by id, scoped to `userId`. Null when missing or foreign. */
+export async function getCategory(userId: string, id: number): Promise<Category | null> {
+  const { rows } = await pool.query<Category>(
+    "SELECT id, name, priority FROM categories WHERE user_id = $1 AND id = $2",
+    [userId, id],
+  );
+  return rows[0] ?? null;
+}

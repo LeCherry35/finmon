@@ -51,5 +51,7 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!api/auth|_next/static|_next/image|favicon.ico).*)"],
+  // api/agent/mcp is called by the opencode sidecar with a bearer token, never
+  // with a session cookie — it authenticates itself (see its route handler).
+  matcher: ["/((?!api/auth|api/agent/mcp|_next/static|_next/image|favicon.ico).*)"],
 };

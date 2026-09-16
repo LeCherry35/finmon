@@ -1,3 +1,9 @@
+17.09.2026
+### ✅ FIXED — `deleteTransaction` skips id validation and returns nothing
+`src/actions/transactions.ts:158` (`deleteTransaction`) reads `id = Number(formData.get("id"))` and runs `DELETE … WHERE id = $1 AND user_id = $2` without checking `!Number.isFinite(id) || id <= 0`. Compare to `updateTransaction` which validates. Also returns implicit `void` while sibling actions return `ActionResult`. Today the form always sends a valid id, so it's latent — but inconsistent with the rest of the file.
+
+**Fix:** The logic moved to `deleteTransactionFor` (`src/lib/mutations/transactions.ts`), which rejects a non-positive/non-numeric id with "Invalid transaction" before querying and returns `ActionResult` ("Transaction not found" when nothing was deleted). The `deleteTransaction` form action stays `void`. Test: invalid ids (`0`, `-1`, `abc`, blank) run no query.
+
 
 03.08.2026
 ### ✅ FIXED — Uncategorized spend vanishes from every aggregate
