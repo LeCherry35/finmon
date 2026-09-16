@@ -3,7 +3,7 @@
 import { useActionState, useEffect, useState } from "react";
 import { createTransaction } from "@/actions/transactions";
 import type { Category } from "@/actions/categories";
-import ReceiptUpload from "@/components/ReceiptUpload";
+import ReceiptUpload, { ManualEntryDivider } from "@/components/ReceiptUpload";
 import {
   emptyTransactionGuard,
   useReceiptScanCreate,
@@ -98,6 +98,13 @@ export default function TransactionCreateSheet({
               }}
               className="px-4 pb-4 space-y-3"
             >
+              <ReceiptUpload
+                value={receipt}
+                onChange={setReceipt}
+                disabled={pending}
+              />
+              <input type="hidden" name="has_receipt" value={receipt ? "1" : ""} />
+              <ManualEntryDivider />
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Amount">
                   <input
@@ -153,14 +160,6 @@ export default function TransactionCreateSheet({
                   className={inputCls}
                 />
               </Field>
-              <Field label="Receipt">
-                <ReceiptUpload
-                  value={receipt}
-                  onChange={setReceipt}
-                  disabled={pending}
-                />
-              </Field>
-              <input type="hidden" name="has_receipt" value={receipt ? "1" : ""} />
               {(guardError ?? state.error) && (
                 <p className="text-sm text-red-600">{guardError ?? state.error}</p>
               )}

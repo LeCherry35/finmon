@@ -167,6 +167,23 @@ const ResultSchema = z.object({
 /** The scanned purchase date is only usable in the transaction's date format. */
 const SCAN_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+/** How far back a scanned purchase date may lie before it's treated as a misread. */
+export const SCAN_DATE_MAX_AGE_DAYS = 60;
+
+/** Whether a scanned `YYYY-MM-DD` date is plausible enough to apply to the
+ *  transaction: no more than `SCAN_DATE_MAX_AGE_DAYS` before `today`, and at most
+ *  one day after it (slack for the server's UTC "today" vs the receipt's local
+ *  date). Anything else — a misread year, a far-future date — is ignored and the
+ *  transaction keeps today's date. */
+export function isPlausibleScanDate(date: string, today: string): boolean {
+  if (!SCAN_DATE_RE.test(date) || !SCAN_DATE_RE.test(today)) return false;
+  const d = Date.parse(`${date}T00:00:00Z`);
+  const t = Date.parse(`${today}T00:00:00Z`);
+  if (Number.isNaN(d) || Number.isNaN(t)) return false;
+  const days = (d - t) / 86_400_000;
+  return days >= -SCAN_DATE_MAX_AGE_DAYS && days <= 1;
+}
+
 const trimOrNull = (s: string | null | undefined): string | null => {
   const t = (s ?? "").trim();
   return t.length > 0 ? t : null;

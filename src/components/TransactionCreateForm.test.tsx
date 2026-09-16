@@ -47,6 +47,28 @@ describe("TransactionCreateForm receipt scanning", { timeout: 15_000 }, () => {
     );
   });
 
+  it("shows the scan tile, then a thumbnail card that can be cleared", async () => {
+    const { container } = renderForm();
+    expect(screen.getByText("Scan receipt")).toBeInTheDocument();
+
+    await userEvent.upload(
+      fileInput(container),
+      new File(["x"], "receipt.jpg", { type: "image/jpeg" }),
+    );
+
+    expect(await screen.findByAltText("Staged receipt")).toHaveAttribute(
+      "src",
+      expect.stringMatching(/^data:image\//),
+    );
+    expect(screen.getByText("receipt.jpg")).toBeInTheDocument();
+    expect(screen.getByText("Change")).toBeInTheDocument();
+    expect(screen.queryByText("Scan receipt")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Remove receipt" }));
+    expect(screen.getByText("Scan receipt")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add" })).toBeInTheDocument();
+  });
+
   it("creates the transaction with has_receipt, then fires a scan for the new row", async () => {
     const { container } = renderForm();
 

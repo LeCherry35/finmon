@@ -1,5 +1,5 @@
 ﻿import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { scanReceipt } from "@/lib/receipt-scan";
+import { isPlausibleScanDate, scanReceipt } from "@/lib/receipt-scan";
 
 const fetchMock = vi.fn();
 
@@ -348,5 +348,22 @@ describe("scanReceipt system prompt", () => {
       vi.doUnmock("node:fs");
       vi.resetModules();
     }
+  });
+});
+
+describe("isPlausibleScanDate", () => {
+  const today = "2026-03-01";
+
+  it.each([
+    ["2026-03-01", true], // today
+    ["2026-03-02", true], // tomorrow (timezone slack)
+    ["2026-03-03", false], // further in the future
+    ["2025-12-31", true], // exactly 60 days back, across a year boundary
+    ["2025-12-30", false], // 61 days back
+    ["2019-03-01", false], // misread year
+    ["2027-03-01", false],
+    ["01/03/2026", false], // wrong format
+  ])("%s → %s", (date, expected) => {
+    expect(isPlausibleScanDate(date, today)).toBe(expected);
   });
 });

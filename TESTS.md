@@ -121,7 +121,7 @@ Seams in use:
 | `better-auth/cookies` | `getSessionCookie` spy | `proxy` |
 | `resend` | `{ Resend: () => ({ emails: { send } }) }` | `email` |
 | `@/actions/{transactions,categories,plans}` | the action(s) → `vi.fn()` | component tests |
-| `next/navigation` | `useRouter`→`{replace}`, `usePathname`, `useSearchParams` | `ChartTabs`, `FilterPanel` |
+| `next/navigation` | `useRouter`→`{replace}`, `usePathname`, `useSearchParams` | `ChartTabs`, `FilterPanel`, `NavLinks` |
 
 Reset between tests: `query.mockReset()` in `beforeEach`, `vi.clearAllMocks()` in
 `afterEach`. For `email` tests, also `vi.resetModules()` + `vi.unstubAllEnvs()`
@@ -192,6 +192,7 @@ Covered client components and what each test pins:
 | `TransactionCreateSheet.test.tsx` | FAB open / Escape / Close, **auto-close on `successCount` bump**, error keeps it open, datalist options |
 | `ChartTabs.test.tsx` | sets/clears `?chart=`, preserves other params, no-op on active tab |
 | `FilterPanel.test.tsx` | open dropdown, month/category toggle → URL params, "all but one" collapse, Clear all, `showCategoryFilter` |
+| `NavLinks.test.tsx` | remembered filter query appended to filter-page links (desktop + mobile nav), not `/categories` |
 | `BugReportButton.test.tsx` | open/Escape/Close, submit `FormData` (message), auto-close on `successCount` bump, error keeps it open |
 
 Conventions / gotchas learned here:

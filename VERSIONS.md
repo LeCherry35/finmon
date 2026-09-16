@@ -8,6 +8,26 @@ Entry shape: `## <version> — <YYYY-MM-DD> — <headline>`, then **Added / Chan
 
 ---
 
+## 0.8.0 — 2026-09-16 — Plan carry-over, scan tile, sticky filters
+
+Fixes from in-app bug reports.
+
+### Added
+- **Plan carry-over** — an empty current/future month on `/plan` is seeded from the latest earlier month with plans. Months with a saved plan, and past months, are untouched.
+- **Sticky filters** — the month/category selection follows the nav between Transactions, Expenditures, Plan and Charts (per browser tab).
+- **Expenditures → transactions** — clicking a category opens `/transactions` filtered to it and the same months.
+
+### Changed
+- **"Scan receipt" hero tile** at the top of the create form and mobile sheet; a staged photo shows a thumbnail with Change / remove.
+
+### Fixed
+- **Implausible scanned dates ignored** — a date over 60 days back or over a day ahead keeps today's date.
+
+### Deploy notes
+- No migration or env changes.
+
+---
+
 ## 0.7.0 — 2026-08-04 — Bug reports from the header
 
 ### Added

@@ -3,7 +3,7 @@
 import { useActionState, useState } from "react";
 import { createTransaction } from "@/actions/transactions";
 import type { Category } from "@/actions/categories";
-import ReceiptUpload from "@/components/ReceiptUpload";
+import ReceiptUpload, { ManualEntryDivider } from "@/components/ReceiptUpload";
 import {
   emptyTransactionGuard,
   useReceiptScanCreate,
@@ -38,8 +38,11 @@ export default function TransactionCreateForm({
           setGuardError(null);
         }
       }}
-      className="hidden md:block space-y-2"
+      className="hidden md:block space-y-3"
     >
+      <ReceiptUpload value={receipt} onChange={setReceipt} disabled={pending} />
+      <input type="hidden" name="has_receipt" value={receipt ? "1" : ""} />
+      <ManualEntryDivider />
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <input
           name="amount"
@@ -84,9 +87,7 @@ export default function TransactionCreateForm({
           className={`flex-1 ${inputCls}`}
         />
       </div>
-      <div className="flex items-center justify-between gap-3">
-        <ReceiptUpload value={receipt} onChange={setReceipt} disabled={pending} />
-        <input type="hidden" name="has_receipt" value={receipt ? "1" : ""} />
+      <div className="flex justify-end">
         <button
           type="submit"
           disabled={pending}

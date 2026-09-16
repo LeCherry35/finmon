@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { pool } from "@/db";
 import { userOwnsTransaction } from "@/db/queries";
 import { requireUser } from "@/lib/dal";
-import { scanReceipt } from "@/lib/receipt-scan";
+import { isPlausibleScanDate, scanReceipt } from "@/lib/receipt-scan";
 import { insertProducts, recomputeTransactionStatus } from "@/actions/products";
 import type { ActionResult } from "@/actions/transactions";
 
@@ -173,13 +173,22 @@ export async function scanReceiptForTransaction(
     }
 
     const today = new Date().toISOString().slice(0, 10);
+    // A date far from today is almost certainly a misread (wrong year, etc.) —
+    // drop it so the transaction keeps its date instead.
+    let scannedDate = date;
+    if (scannedDate !== null && !isPlausibleScanDate(scannedDate, today)) {
+      console.warn(
+        `Ignoring implausible scanned date ${scannedDate} for transaction ${transactionId}`,
+      );
+      scannedDate = null;
+    }
     await pool.query(
       `UPDATE transactions
        SET category_id = COALESCE(category_id, $1),
            store       = COALESCE(store, $2),
            date        = CASE WHEN $3::text IS NOT NULL AND date = $4 THEN $3::text ELSE date END
        WHERE id = $5 AND user_id = $6`,
-      [scannedCategoryId, store, date, today, transactionId, userId],
+      [scannedCategoryId, store, scannedDate, today, transactionId, userId],
     );
 
     await insertProducts(userId, transactionId, products);

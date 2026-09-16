@@ -7,3 +7,12 @@ export const NAV_LINKS = [
 ] as const;
 
 export type NavHref = (typeof NAV_LINKS)[number]["href"];
+
+/** Pages that share the FilterPanel — the nav carries the remembered filter
+ *  selection to these (see `src/lib/filter-memory.ts`). */
+export const FILTER_PAGES: ReadonlySet<string> = new Set<NavHref>([
+  "/transactions",
+  "/expenditures",
+  "/plan",
+  "/charts",
+]);

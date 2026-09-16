@@ -5,9 +5,11 @@ import {
   getCategories,
   getAvailableMonths,
 } from "@/db/queries";
+import Link from "next/link";
 import { requireUser } from "@/lib/dal";
 import FilterPanel from "@/components/FilterPanel";
-import { parseFilters, resolveFilters } from "@/lib/filters";
+import { buildFilterQuery, parseFilters, resolveFilters } from "@/lib/filters";
+import { UNCATEGORIZED_ID } from "@/lib/categories";
 
 export default async function ExpendituresPage(
   props: PageProps<"/expenditures">,
@@ -59,7 +61,19 @@ export default async function ExpendituresPage(
           <tbody>
             {rows.map((row) => (
               <tr key={row.category_id} className="border-b border-zinc-100">
-                <td className="py-2 pr-4 text-sm">{row.category_name}</td>
+                <td className="py-2 pr-4 text-sm">
+                  {row.category_id === UNCATEGORIZED_ID ? (
+                    row.category_name
+                  ) : (
+                    // Same months as this view, so the list matches the total.
+                    <Link
+                      href={`/transactions${buildFilterQuery(filters.months, [row.category_id])}`}
+                      className="underline decoration-zinc-300 underline-offset-4 hover:decoration-zinc-900"
+                    >
+                      {row.category_name}
+                    </Link>
+                  )}
+                </td>
                 <td className="py-2 pr-4 text-sm text-right text-zinc-500">{row.count}</td>
                 <td className="py-2 text-sm text-right text-red-600">
                   {Number(row.total).toFixed(2)}

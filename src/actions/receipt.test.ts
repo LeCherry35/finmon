@@ -12,7 +12,10 @@ const { query, scanReceipt, insertProducts, recomputeTransactionStatus, userOwns
   }));
 
 vi.mock("@/db", () => ({ pool: { query } }));
-vi.mock("@/lib/receipt-scan", () => ({ scanReceipt }));
+vi.mock("@/lib/receipt-scan", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/receipt-scan")>()),
+  scanReceipt,
+}));
 vi.mock("@/actions/products", () => ({ insertProducts, recomputeTransactionStatus }));
 vi.mock("@/db/queries", () => ({ userOwnsTransaction }));
 vi.mock("@/lib/dal", () => ({ requireUser: vi.fn(async () => ({ id: TEST_USER_ID })) }));
@@ -221,6 +224,25 @@ describe("scanReceiptForTransaction", () => {
       expect(params[2]).toBe("2026-07-01");
       expect(params[3]).toBe("2026-07-08");
     } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores a scanned date far from today, keeping the transaction's date", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-08T12:00:00Z"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      primeQueries();
+      scanReceipt.mockResolvedValueOnce(scanResult({ date: "2019-07-01" }));
+
+      await scanReceiptForTransaction(formData({ transaction_id: "42", image: IMG }));
+
+      const [, params] = writebackCall()!;
+      expect(params[2]).toBeNull();
+      expect(warn).toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
       vi.useRealTimers();
     }
   });

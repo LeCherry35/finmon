@@ -12,7 +12,7 @@ vi.mock("@/lib/dal", () => ({
 }));
 vi.mock("next/cache", () => ({ revalidatePath }));
 
-import { upsertPlan } from "@/actions/plans";
+import { seedPlansFromPreviousMonth, upsertPlan } from "@/actions/plans";
 
 beforeEach(() => {
   query.mockReset();
@@ -63,5 +63,45 @@ describe("upsertPlan", () => {
     expect(sql).toMatch(/ON CONFLICT \(category_id, month\) DO UPDATE/);
     expect(params).toEqual([3, "2026-06", 100, TEST_USER_ID]);
     expect(revalidatePath).toHaveBeenCalledWith("/plan");
+  });
+});
+
+describe("seedPlansFromPreviousMonth", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-16T12:00:00Z"));
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("copies the latest earlier month's plans into an empty current month", async () => {
+    query.mockResolvedValueOnce({ rowCount: 3 });
+    await seedPlansFromPreviousMonth("2026-09");
+    expect(query).toHaveBeenCalledTimes(1);
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toMatch(/INSERT INTO plans/);
+    expect(sql).toMatch(/SELECT MAX\(month\) FROM plans WHERE user_id = \$1 AND month < \$2/);
+    expect(sql).toMatch(/NOT EXISTS \(SELECT 1 FROM plans WHERE user_id = \$1 AND month = \$2\)/);
+    expect(sql).toMatch(/ON CONFLICT \(category_id, month\) DO NOTHING/);
+    expect(params).toEqual([TEST_USER_ID, "2026-09"]);
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("seeds a future month too", async () => {
+    query.mockResolvedValueOnce({ rowCount: 0 });
+    await seedPlansFromPreviousMonth("2026-10");
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["2026-08", "2025-12", "2026-9", "bogus"])("skips past or invalid month %s", async (month) => {
+    await seedPlansFromPreviousMonth(month);
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it("logs and swallows a DB failure", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    query.mockRejectedValueOnce(new Error("db down"));
+    await expect(seedPlansFromPreviousMonth("2026-09")).resolves.toBeUndefined();
+    expect(error).toHaveBeenCalled();
+    error.mockRestore();
   });
 });

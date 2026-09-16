@@ -2,10 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { NAV_LINKS, type NavHref } from "@/lib/nav";
+import { useFilterQuery } from "@/lib/filter-memory";
+import { FILTER_PAGES, NAV_LINKS, type NavHref } from "@/lib/nav";
 
 export default function MobileBottomNav() {
   const pathname = usePathname();
+  const filterQuery = useFilterQuery();
 
   return (
     <nav className="fixed bottom-0 inset-x-0 z-20 border-t border-zinc-200 bg-white/95 backdrop-blur flex md:hidden safe-pb">
@@ -14,7 +16,7 @@ export default function MobileBottomNav() {
         return (
           <Link
             key={href}
-            href={href}
+            href={FILTER_PAGES.has(href) ? href + filterQuery : href}
             className={`flex-1 min-w-0 flex flex-col items-center gap-0.5 py-2 text-[11px] border-t-2 -mt-px ${
               active
                 ? "text-zinc-900 border-zinc-900"

@@ -7,6 +7,7 @@ import {
   getAvailableMonths,
 } from "@/db/queries";
 import { requireUser } from "@/lib/dal";
+import { seedPlansFromPreviousMonth } from "@/actions/plans";
 import PlanRow from "@/components/PlanRow";
 import FilterPanel from "@/components/FilterPanel";
 import {
@@ -88,6 +89,8 @@ async function SingleMonthPlan({
   month: string;
   categoryIds: number[] | null;
 }) {
+  // A new month starts with last month's plans rather than an empty table.
+  await seedPlansFromPreviousMonth(month);
   const rows = await getPlansForMonth(userId, month, categoryIds);
   const total = rows.reduce((sum, r) => sum + (r.amount ?? 0), 0);
   // Count spend from every category, including those with no plan (treated as a
