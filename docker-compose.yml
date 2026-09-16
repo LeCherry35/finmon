@@ -67,6 +67,8 @@ services:
       - opencode-data:/home/agent/.local/share/opencode
     tmpfs:
       - /tmp
+      # opencode writes into its config dir on startup; the root fs is read-only.
+      - /home/agent/.config/opencode:uid=1001,gid=1001
       - /home/agent/.cache:uid=1001,gid=1001
       - /home/agent/.local/state:uid=1001,gid=1001
     read_only: true

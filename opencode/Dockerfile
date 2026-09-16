@@ -17,12 +17,14 @@ RUN groupadd --system --gid 1001 agent \
  && chown -R agent:agent /home/agent /agents
 
 # Global defaults: deny everything. Each user's config narrows it further to
-# "deny all, allow finmon_*".
-COPY --chown=agent:agent global-config.json /home/agent/.config/opencode/opencode.json
+# "deny all, allow finmon_*". Kept outside ~/.config/opencode, which opencode
+# writes to on startup (.gitignore, package.json, node_modules) — a tmpfs in compose.
+COPY global-config.json /etc/opencode/opencode.json
 
 USER agent
 WORKDIR /home/agent
-ENV OPENCODE_DISABLE_AUTOUPDATE=true \
+ENV OPENCODE_CONFIG=/etc/opencode/opencode.json \
+    OPENCODE_DISABLE_AUTOUPDATE=true \
     OPENCODE_DISABLE_LSP_DOWNLOAD=true
 
 EXPOSE 4096
