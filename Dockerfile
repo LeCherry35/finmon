@@ -1,9 +1,17 @@
 FROM node:22-alpine AS base
 
+# Pin the manifests' "version" to 0.0.0 so a release bump doesn't bust the
+# `npm ci` layer cache: COPY --from is content-checksummed, so deps only
+# reinstalls when something other than the version changes.
+FROM base AS manifests
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN node -e 'const fs=require("fs");for(const f of ["package.json","package-lock.json"]){const j=JSON.parse(fs.readFileSync(f));j.version="0.0.0";if(j.packages?.[""])j.packages[""].version="0.0.0";fs.writeFileSync(f,JSON.stringify(j,null,2)+"\n")}'
+
 FROM base AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
-COPY package.json package-lock.json ./
+COPY --from=manifests /app/package.json /app/package-lock.json ./
 RUN npm ci
 
 FROM base AS builder
