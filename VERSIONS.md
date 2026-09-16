@@ -8,6 +8,16 @@ Entry shape: `## <version> — <YYYY-MM-DD> — <headline>`, then **Added / Chan
 
 ---
 
+## 0.9.0 — 2026-09-16 — Transaction text search
+
+### Added
+- **Search on `/transactions`** — a small search button in the header opens a text box. It matches store, note, category and the transaction's products (name, brand, type, description, tags), case-insensitive, and combines with the month/category filters and sort. The search lives in the URL (`?q=`) and isn't carried to other pages.
+
+### Deploy notes
+- No migration or env changes.
+
+---
+
 ## 0.8.0 — 2026-09-16 — Plan carry-over, scan tile, sticky filters
 
 Fixes from in-app bug reports.

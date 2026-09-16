@@ -48,6 +48,11 @@ function anyArrayFilter(
   return `${column} = ANY($${params.length}::${type}[])`;
 }
 
+/** Escapes LIKE/ILIKE wildcards (and the default `\` escape char) so user text matches literally. */
+export function escapeLike(s: string): string {
+  return s.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
 export async function getCategories(userId: string): Promise<Category[]> {
   const { rows } = await pool.query<Category>(
     "SELECT * FROM categories WHERE user_id = $1 ORDER BY priority DESC, name ASC",
@@ -317,6 +322,7 @@ export async function getTransactions(
   userId: string,
   f: QueryFilters = {},
   sort: TransactionSort = "date",
+  search?: string,
 ): Promise<Transaction[]> {
   const where: string[] = ["t.user_id = $1"];
   const params: unknown[] = [userId];
@@ -325,6 +331,21 @@ export async function getTransactions(
   if (monthFilter) where.push(monthFilter);
   const catFilter = anyArrayFilter("t.category_id", f.categoryIds, "int", params);
   if (catFilter) where.push(catFilter);
+  const term = search?.trim();
+  if (term) {
+    // Free-text search over the transaction, its category and its products.
+    // EXISTS keeps one row per transaction however many products match.
+    params.push(`%${escapeLike(term)}%`);
+    const n = `$${params.length}`;
+    where.push(
+      `(t.store ILIKE ${n} OR t.note ILIKE ${n} OR c.name ILIKE ${n}
+        OR EXISTS (SELECT 1 FROM products p
+                   WHERE p.user_id = t.user_id AND p.transaction_id = t.id
+                     AND (p.name ILIKE ${n} OR p.brand ILIKE ${n} OR p.product_type ILIKE ${n}
+                          OR p.description ILIKE ${n}
+                          OR EXISTS (SELECT 1 FROM unnest(p.tags) AS tag WHERE tag ILIKE ${n}))))`,
+    );
+  }
 
   const orderBy = sort === "added" ? "t.id DESC" : "t.date DESC, t.id DESC";
 

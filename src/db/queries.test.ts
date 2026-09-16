@@ -234,6 +234,28 @@ describe("getTransactions", () => {
     expect(params).toEqual([USER, ["2026-06"], [3]]);
   });
 
+  it("adds a free-text search over transaction, category and products", async () => {
+    await getTransactions(USER, {}, "date", "  milk ");
+    const { sql, params } = lastCall();
+    expect(params).toEqual([USER, "%milk%"]);
+    expect(sql).toMatch(/t\.store ILIKE \$2/);
+    expect(sql).toMatch(/c\.name ILIKE \$2/);
+    expect(sql).toMatch(/EXISTS \(SELECT 1 FROM products p/);
+    expect(sql).toMatch(/unnest\(p\.tags\)/);
+  });
+
+  it("escapes LIKE wildcards in the search term", async () => {
+    await getTransactions(USER, {}, "date", "50%_off\\");
+    expect(lastCall().params).toEqual([USER, "%50\\%\\_off\\\\%"]);
+  });
+
+  it("ignores a blank search", async () => {
+    await getTransactions(USER, {}, "date", "   ");
+    const { sql, params } = lastCall();
+    expect(sql).not.toMatch(/ILIKE/);
+    expect(params).toEqual([USER]);
+  });
+
   it("attaches each transaction's products in a second user-scoped query", async () => {
     query
       .mockResolvedValueOnce({ rows: [{ id: 1 }, { id: 2 }] }) // transactions
