@@ -123,3 +123,17 @@ describe("TransactionCreateSheet", () => {
     ]);
   });
 });
+
+describe("TransactionCreateSheet assistant button", () => {
+  it("stacks the assistant link above the + in the same container when enabled", () => {
+    const { unmount } = renderSheet();
+    expect(screen.queryByRole("link", { name: "Assistant" })).toBeNull();
+    unmount();
+
+    render(<TransactionCreateSheet categories={categories} today="2026-06-01" showAssistant />);
+    const link = screen.getByRole("link", { name: "Assistant" });
+    const plus = screen.getByRole("button", { name: "Add transaction" });
+    expect(link.parentElement).toBe(plus.parentElement);
+    expect(link.compareDocumentPosition(plus) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});

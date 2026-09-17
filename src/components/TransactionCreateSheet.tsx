@@ -3,6 +3,7 @@
 import { useActionState, useEffect, useState } from "react";
 import { createTransaction } from "@/actions/transactions";
 import type { Category } from "@/actions/categories";
+import { AssistantButton } from "@/components/agent/AssistantFab";
 import ReceiptUpload, { ManualEntryDivider } from "@/components/ReceiptUpload";
 import {
   emptyTransactionGuard,
@@ -12,9 +13,12 @@ import {
 export default function TransactionCreateSheet({
   categories,
   today,
+  showAssistant = false,
 }: {
   categories: Category[];
   today: string;
+  /** Stack the assistant button above the "+" (see AssistantFab). */
+  showAssistant?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [state, formAction, pending] = useActionState(createTransaction, {
@@ -48,14 +52,17 @@ export default function TransactionCreateSheet({
 
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        aria-label="Add transaction"
-        className="fixed right-4 bottom-[calc(env(safe-area-inset-bottom,0px)+5rem)] z-30 w-14 h-14 rounded-full bg-zinc-900 text-white shadow-lg flex items-center justify-center text-2xl leading-none md:hidden active:scale-95 transition-transform"
-      >
-        +
-      </button>
+      <div className="fixed right-4 bottom-[calc(env(safe-area-inset-bottom,0px)+5rem)] z-30 flex flex-col gap-3 md:hidden">
+        {showAssistant && <AssistantButton />}
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          aria-label="Add transaction"
+          className="w-14 h-14 rounded-full bg-zinc-900 text-white shadow-lg flex items-center justify-center text-2xl leading-none active:scale-95 transition-transform"
+        >
+          +
+        </button>
+      </div>
 
       {open && (
         <>

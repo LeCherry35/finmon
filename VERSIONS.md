@@ -8,6 +8,16 @@ Entry shape: `## <version> — <YYYY-MM-DD> — <headline>`, then **Added / Chan
 
 ---
 
+## 0.11.1 — 2026-09-17 — Mobile assistant button fix
+
+### Fixed
+- On Transactions (iPhone) the assistant button overlapped the "+" button. They now share one container, stacked with a gap.
+
+### Changed
+- The mobile assistant button is gray, so it's distinct from the black "+".
+
+---
+
 ## 0.11.0 — 2026-09-17 — Assistant page
 
 ### Added

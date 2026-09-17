@@ -6,6 +6,7 @@ import {
   getAvailableMonths,
 } from "@/db/queries";
 import { requireUser } from "@/lib/dal";
+import { isAgentConfigured } from "@/lib/opencode";
 import TransactionRow from "@/components/TransactionRow";
 import TransactionCreateForm from "@/components/TransactionCreateForm";
 import TransactionCreateSheet from "@/components/TransactionCreateSheet";
@@ -57,7 +58,11 @@ export default async function TransactionsPage(
       </div>
 
       <TransactionCreateForm categories={categories} today={today} />
-      <TransactionCreateSheet categories={categories} today={today} />
+      <TransactionCreateSheet
+        categories={categories}
+        today={today}
+        showAssistant={isAgentConfigured()}
+      />
 
       <table className="w-full table-auto md:table-fixed">
         <colgroup>
