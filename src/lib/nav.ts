@@ -6,6 +6,10 @@ export const NAV_LINKS = [
   { href: "/charts", label: "Charts", short: "Charts" },
 ] as const;
 
+/** Desktop header only (mobile reaches it via AssistantFab); shown when the
+ *  assistant is configured. Kept out of NAV_LINKS so the bottom bar stays at 5. */
+export const ASSISTANT_LINK = { href: "/assistant", label: "Assistant" } as const;
+
 export type NavHref = (typeof NAV_LINKS)[number]["href"];
 
 /** Pages that share the FilterPanel — the nav carries the remembered filter

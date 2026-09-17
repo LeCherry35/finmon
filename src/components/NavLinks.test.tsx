@@ -46,3 +46,17 @@ describe("nav filter memory", () => {
     await waitFor(() => expect(hrefOf("Plan")).toBe("/plan?categories=9"));
   });
 });
+
+describe("assistant link", () => {
+  it("is shown only when enabled", () => {
+    nav.pathname = "/assistant";
+    nav.search = "";
+    const { unmount } = render(<NavLinks />);
+    expect(screen.queryByRole("link", { name: "Assistant" })).toBeNull();
+    unmount();
+    render(<NavLinks showAssistant />);
+    const link = screen.getByRole("link", { name: "Assistant" });
+    expect(link.getAttribute("href")).toBe("/assistant");
+    expect(link.className).toMatch(/font-medium/);
+  });
+});

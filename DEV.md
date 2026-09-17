@@ -15,7 +15,7 @@ automatically on the first request; there is no separate init step.
 
 ## AI assistant (optional)
 
-The chat button appears only when the assistant env vars are set (see `src/db/CLAUDE.md`). Locally, run opencode yourself:
+The assistant (`/assistant`, header link, mobile button) appears only when the assistant env vars are set (see `src/db/CLAUDE.md`). Locally, run opencode yourself:
 
 ```bash
 npm i -g opencode-ai@1.18.28

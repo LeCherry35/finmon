@@ -4,7 +4,7 @@ All DB writes live here. Each file is `"use server"` at the top, reads `FormData
 
 **Core logic split:** transactions/products/categories/plans writes are thin wrappers — `requireUser()` then a `…For(userId, formData)` function in `src/lib/mutations/*.ts` (`server-only`), which holds the validation, SQL and `revalidatePath`. The assistant's accepted proposals call the same functions. Never export a `userId`-taking function from a `"use server"` file (it would be a callable endpoint). The behaviour described below lives in those mutation modules.
 
-`agent.ts` — the assistant chat: `listAgentChats`, `loadAgentChat`, `sendAgentMessage` (≤2000 chars, 10 prompts/min per user, in-memory), `acceptProposal` / `rejectProposal` (check chat ownership, `decideProposal`, then post a no-reply note to the opencode session). Returns `AgentResult<T>`.
+`agent.ts` — the assistant chat: `listAgentChats`, `loadAgentChat`, `deleteAgentChat` (soft delete: sets `deleted_at`, keeps the opencode session, best-effort rejects the chat's pending proposals; `ownedChat` ignores deleted chats), `sendAgentMessage` (≤2000 chars, 10 prompts/min per user, in-memory), `acceptProposal` / `rejectProposal` (check chat ownership, `decideProposal`, then post a no-reply note to the opencode session). Returns `AgentResult<T>`.
 
 ### Two return shapes (pick by hook)
 

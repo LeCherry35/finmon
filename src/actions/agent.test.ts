@@ -21,7 +21,14 @@ vi.mock("@/lib/opencode", () => ({
   AgentUnavailableError: class AgentUnavailableError extends Error {},
 }));
 
-import { acceptProposal, loadAgentChat, rejectProposal, sendAgentMessage } from "@/actions/agent";
+import {
+  acceptProposal,
+  deleteAgentChat,
+  listAgentChats,
+  loadAgentChat,
+  rejectProposal,
+  sendAgentMessage,
+} from "@/actions/agent";
 
 const chatRow = { id: 5, opencode_session_id: "ses_1" };
 
@@ -109,5 +116,51 @@ describe("accept/reject", () => {
     decideProposal.mockResolvedValue({ ok: false, error: "Already accepted" });
     expect(await acceptProposal(5, 12)).toEqual({ ok: false, error: "Already accepted" });
     expect(oc.noteProposalDecision).not.toHaveBeenCalled();
+  });
+});
+
+describe("listAgentChats", () => {
+  it("hides deleted chats", async () => {
+    query.mockResolvedValueOnce({ rows: [] });
+    await listAgentChats();
+    expect(query.mock.calls[0][0]).toMatch(/deleted_at IS NULL/);
+    expect(query.mock.calls[0][1]).toEqual([TEST_USER_ID]);
+  });
+});
+
+describe("deleteAgentChat", () => {
+  const toolMessage = (proposalId: number) => ({
+    id: "m1", role: "assistant", text: "", error: null, createdAt: 1,
+    tools: [{ name: "delete_transaction", status: "completed", proposalId, error: null }],
+  });
+
+  it("refuses a chat the user doesn't own (or already deleted)", async () => {
+    query.mockResolvedValueOnce({ rows: [] });
+    expect(await deleteAgentChat(5)).toEqual({ ok: false, error: "Chat not found" });
+    expect(query.mock.calls[0][0]).toMatch(/deleted_at IS NULL/);
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
+  it("soft-deletes the chat and rejects its pending proposals", async () => {
+    query.mockResolvedValueOnce({ rows: [chatRow] }).mockResolvedValue({ rows: [] });
+    oc.getAgentMessages.mockResolvedValue([toolMessage(12)]);
+
+    expect(await deleteAgentChat(5)).toEqual({ ok: true, data: null });
+
+    expect(query.mock.calls[1][0]).toMatch(/UPDATE agent_chats SET deleted_at = now\(\)/);
+    expect(query.mock.calls[1][1]).toEqual([5, TEST_USER_ID]);
+    expect(query.mock.calls.some(([sql]) => /DELETE FROM/i.test(sql))).toBe(false);
+    expect(query.mock.calls[2][0]).toMatch(/UPDATE agent_proposals SET status = 'rejected'/);
+    expect(query.mock.calls[2][0]).toMatch(/status = 'pending'/);
+    expect(query.mock.calls[2][1]).toEqual([TEST_USER_ID, [12]]);
+  });
+
+  it("still deletes when the agent is unreachable", async () => {
+    query.mockResolvedValueOnce({ rows: [chatRow] }).mockResolvedValue({ rows: [] });
+    oc.getAgentMessages.mockRejectedValue(new Error("down"));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    expect(await deleteAgentChat(5)).toEqual({ ok: true, data: null });
+    expect(query).toHaveBeenCalledTimes(2);
   });
 });

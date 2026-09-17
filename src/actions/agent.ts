@@ -60,15 +60,19 @@ async function guard<T>(fn: () => Promise<T>): Promise<AgentResult<T>> {
 async function ownedChat(userId: string, chatId: number) {
   if (!Number.isInteger(chatId) || chatId <= 0) return null;
   const { rows } = await pool.query<{ id: number; opencode_session_id: string }>(
-    "SELECT id, opencode_session_id FROM agent_chats WHERE id = $1 AND user_id = $2",
+    "SELECT id, opencode_session_id FROM agent_chats WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL",
     [chatId, userId],
   );
   return rows[0] ?? null;
 }
 
+function proposalIds(messages: AgentMessage[]): number[] {
+  return messages.flatMap((m) => m.tools.map((t) => t.proposalId)).filter((id): id is number => id !== null);
+}
+
 async function chatState(userId: string, chatId: number, sessionId: string): Promise<AgentChatState> {
   const messages = await getAgentMessages(userId, sessionId);
-  const ids = messages.flatMap((m) => m.tools.map((t) => t.proposalId)).filter((id): id is number => id !== null);
+  const ids = proposalIds(messages);
   const proposals = Object.fromEntries((await getProposals(userId, ids)).map((p) => [p.id, p]));
   return { chatId, messages, proposals };
 }
@@ -83,10 +87,40 @@ function validText(raw: string): string | { error: string } {
 export async function listAgentChats(): Promise<AgentChatSummary[]> {
   const { id: userId } = await requireUser();
   const { rows } = await pool.query<AgentChatSummary>(
-    "SELECT id, title, created_at FROM agent_chats WHERE user_id = $1 ORDER BY id DESC LIMIT 30",
+    `SELECT id, title, created_at FROM agent_chats
+     WHERE user_id = $1 AND deleted_at IS NULL ORDER BY id DESC LIMIT 30`,
     [userId],
   );
   return rows;
+}
+
+/** Hide a chat from the user. The row and the opencode session are kept for
+ *  the record; proposals it left pending are rejected, since nothing can
+ *  accept them any more. */
+export async function deleteAgentChat(chatId: number): Promise<AgentResult<null>> {
+  const { id: userId } = await requireUser();
+  const chat = await ownedChat(userId, chatId);
+  if (!chat) return { ok: false, error: "Chat not found" };
+
+  await pool.query(
+    "UPDATE agent_chats SET deleted_at = now() WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL",
+    [chat.id, userId],
+  );
+
+  try {
+    const messages = await getAgentMessages(userId, chat.opencode_session_id);
+    const ids = proposalIds(messages);
+    if (ids.length > 0) {
+      await pool.query(
+        `UPDATE agent_proposals SET status = 'rejected', decided_at = now()
+         WHERE user_id = $1 AND id = ANY($2::int[]) AND status = 'pending'`,
+        [userId, ids],
+      );
+    }
+  } catch (err) {
+    console.error("Could not clean up proposals of deleted chat:", err);
+  }
+  return { ok: true, data: null };
 }
 
 export async function loadAgentChat(chatId: number): Promise<AgentResult<AgentChatState>> {

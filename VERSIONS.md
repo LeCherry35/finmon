@@ -8,6 +8,21 @@ Entry shape: `## <version> — <YYYY-MM-DD> — <headline>`, then **Added / Chan
 
 ---
 
+## 0.11.0 — 2026-09-17 — Assistant page
+
+### Added
+- **Delete chats** — each chat in the chats list has a delete button (click twice to confirm). Deleting only hides the chat: the record and its conversation are kept. Changes it proposed that were still waiting are marked rejected.
+
+### Changed
+- **The assistant has its own page, `/assistant`.** On desktop it's an "Assistant" link next to the other pages and looks like them (title + pill header). On mobile it's a round button in the bottom-right, above the "+" on Transactions and in the "+" spot on other pages. The header chat icon and slide-in panel are gone.
+- **Chats panel** — the previous-chats dropdown is now a pill in the page header (where filters sit on other pages), with dates and a New chat row.
+- **Nicer chat** — suggestion chips on an empty chat, assistant avatar and bubbles, a typing indicator, a rounded auto-growing composer, and restyled proposal cards with a status pill.
+
+### Migrations
+- `017_agent_chats_soft_delete.sql` — `agent_chats.deleted_at`.
+
+---
+
 ## 0.10.0 — 2026-09-17 — AI assistant
 
 ### Added

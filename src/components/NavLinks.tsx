@@ -5,9 +5,9 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import FilterMemoryRecorder from "@/components/FilterMemoryRecorder";
 import { useFilterQuery } from "@/lib/filter-memory";
-import { FILTER_PAGES, NAV_LINKS } from "@/lib/nav";
+import { ASSISTANT_LINK, FILTER_PAGES, NAV_LINKS } from "@/lib/nav";
 
-export default function NavLinks() {
+export default function NavLinks({ showAssistant = false }: { showAssistant?: boolean }) {
   const pathname = usePathname();
   const filterQuery = useFilterQuery();
 
@@ -22,15 +22,20 @@ export default function NavLinks() {
         <Link
           key={href}
           href={FILTER_PAGES.has(href) ? href + filterQuery : href}
-          className={
-            pathname === href
-              ? "text-zinc-900 font-medium"
-              : "text-zinc-500 hover:text-zinc-900"
-          }
+          className={linkClass(pathname === href)}
         >
           {label}
         </Link>
       ))}
+      {showAssistant && (
+        <Link href={ASSISTANT_LINK.href} className={linkClass(pathname === ASSISTANT_LINK.href)}>
+          {ASSISTANT_LINK.label}
+        </Link>
+      )}
     </span>
   );
+}
+
+function linkClass(active: boolean) {
+  return active ? "text-zinc-900 font-medium" : "text-zinc-500 hover:text-zinc-900";
 }

@@ -5,7 +5,7 @@ import NavLinks from "@/components/NavLinks";
 import MobileBottomNav from "@/components/MobileBottomNav";
 import UserMenu from "@/components/UserMenu";
 import BugReportButton from "@/components/BugReportButton";
-import AgentChatButton from "@/components/agent/AgentChatButton";
+import AssistantFab from "@/components/agent/AssistantFab";
 import { isAgentConfigured } from "@/lib/opencode";
 import { getCurrentUser } from "@/lib/dal";
 import "./globals.css";
@@ -32,6 +32,7 @@ export default async function RootLayout({
 }>) {
   const user = await getCurrentUser();
   const authed = !!user;
+  const agentOn = authed && isAgentConfigured();
 
   return (
     <html lang="en" className={`${mono.variable} h-full antialiased`}>
@@ -43,9 +44,8 @@ export default async function RootLayout({
           >
             finmon
           </Link>
-          {authed && <NavLinks />}
+          {authed && <NavLinks showAssistant={agentOn} />}
           {authed && <UserMenu />}
-          {authed && isAgentConfigured() && <AgentChatButton />}
           {authed && <BugReportButton />}
         </nav>
         <main
@@ -58,6 +58,7 @@ export default async function RootLayout({
           {children}
         </main>
         {authed && <MobileBottomNav />}
+        {agentOn && <AssistantFab />}
       </body>
     </html>
   );

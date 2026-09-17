@@ -2,11 +2,18 @@
 
 import type { AgentProposal } from "@/lib/agent-proposals";
 
-const STATUS_STYLES: Record<AgentProposal["status"], string> = {
-  pending: "border-amber-300 bg-amber-50",
-  accepted: "border-emerald-300 bg-emerald-50",
-  rejected: "border-zinc-200 bg-zinc-50 opacity-70",
-  failed: "border-red-300 bg-red-50",
+const ACCENT: Record<AgentProposal["status"], string> = {
+  pending: "border-l-amber-400",
+  accepted: "border-l-emerald-500",
+  rejected: "border-l-zinc-300 opacity-70",
+  failed: "border-l-red-500",
+};
+
+const PILL: Record<AgentProposal["status"], [label: string, className: string]> = {
+  pending: ["Pending", "bg-amber-100 text-amber-800"],
+  accepted: ["Applied", "bg-emerald-100 text-emerald-800"],
+  rejected: ["Rejected", "bg-zinc-100 text-zinc-600"],
+  failed: ["Failed", "bg-red-100 text-red-700"],
 };
 
 /** A change the agent proposed. Nothing is written until the user accepts. */
@@ -22,9 +29,17 @@ export default function ProposalCard({
   onReject: () => void;
 }) {
   const [title, ...details] = proposal.summary.split("\n");
+  const [pillLabel, pillClass] = PILL[proposal.status];
   return (
-    <div className={`rounded-lg border px-3 py-2 text-sm ${STATUS_STYLES[proposal.status]}`}>
-      <p className="font-medium">{title}</p>
+    <div
+      className={`rounded-lg border border-zinc-200 border-l-4 bg-white px-3 py-2.5 text-sm shadow-sm ${ACCENT[proposal.status]}`}
+    >
+      <div className="flex items-start gap-2">
+        <p className="flex-1 font-medium">{title}</p>
+        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${pillClass}`}>
+          {pillLabel}
+        </span>
+      </div>
       {details.length > 0 && (
         <ul className="mt-1 space-y-0.5 font-mono text-xs text-zinc-600">
           {details.map((line, i) => (
@@ -32,13 +47,13 @@ export default function ProposalCard({
           ))}
         </ul>
       )}
-      {proposal.status === "pending" ? (
-        <div className="mt-2 flex gap-2">
+      {proposal.status === "pending" && (
+        <div className="mt-2.5 flex gap-2">
           <button
             type="button"
             onClick={onAccept}
             disabled={busy}
-            className="rounded bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-700 disabled:opacity-50"
+            className="rounded-full bg-zinc-900 px-3.5 py-1.5 text-xs font-medium text-white hover:bg-zinc-700 disabled:opacity-50"
           >
             Accept
           </button>
@@ -46,18 +61,13 @@ export default function ProposalCard({
             type="button"
             onClick={onReject}
             disabled={busy}
-            className="rounded border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium hover:bg-zinc-100 disabled:opacity-50"
+            className="rounded-full border border-zinc-300 bg-white px-3.5 py-1.5 text-xs font-medium hover:bg-zinc-100 disabled:opacity-50"
           >
             Reject
           </button>
         </div>
-      ) : (
-        <p className="mt-1 text-xs text-zinc-500">
-          {proposal.status === "accepted" && "Applied"}
-          {proposal.status === "rejected" && "Rejected"}
-          {proposal.status === "failed" && `Failed: ${proposal.error}`}
-        </p>
       )}
+      {proposal.status === "failed" && <p className="mt-1 text-xs text-red-700">{proposal.error}</p>}
     </div>
   );
 }
