@@ -8,6 +8,20 @@ Entry shape: `## <version> — <YYYY-MM-DD> — <headline>`, then **Added / Chan
 
 ---
 
+## 0.11.2 — 2026-09-17 — Assistant: string amounts, stuck chat
+
+### Fixed
+- The assistant couldn't propose a transaction when the model sent the amount as text (`"100"`), failing with "expected number, received string". Numeric strings are now accepted for every number in the assistant's tools.
+- A slow assistant reply could leave the chat stuck: the send button stayed disabled with no error shown. A failed or timed-out request now shows an error, restores the message and reloads the chat.
+
+### Changed
+- opencode requests now time out after 90s instead of 170s, so the page gets an answer before Cloudflare's 100s limit. nginx waits up to 120s on the app instead of the 60s default.
+
+### Deploy notes
+- nginx config changed: `docker compose up -d --build` picks it up (or `docker compose restart nginx`).
+
+---
+
 ## 0.11.1 — 2026-09-17 — Mobile assistant button fix
 
 ### Fixed

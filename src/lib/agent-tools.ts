@@ -51,8 +51,15 @@ export class AgentToolError extends Error {}
 
 const DATE = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD");
 const MONTH = z.string().regex(/^\d{4}-\d{2}$/, "Use YYYY-MM");
-const ID = z.number().int().positive();
-const MONEY = z.number().positive();
+/** Numbers from the model: some models send `"100"` instead of `100`, so
+ *  numeric strings are accepted. The JSON schema still advertises a number. */
+const num = <S extends z.ZodNumber>(schema: S) =>
+  z.preprocess(
+    (v) => (typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v)) ? Number(v) : v),
+    schema,
+  );
+const ID = num(z.number().int().positive());
+const MONEY = num(z.number().positive());
 
 /** Tool input → the FormData the shared mutation functions validate. null
  *  clears a field (blank), arrays (tags) become comma-separated. */
@@ -118,7 +125,7 @@ const searchTransactionsInput = z.object({
   category_ids: z.array(ID).optional().describe("Only these category ids."),
   query: z.string().max(100).optional().describe("Free text matched against store, note, category and product names/brands/tags."),
   sort: z.enum(["date", "added"]).optional().describe("date (default) = by transaction date, added = newest entries first."),
-  limit: z.number().int().min(1).max(200).optional().describe("Max rows returned (default 50)."),
+  limit: num(z.number().int().min(1).max(200)).optional().describe("Max rows returned (default 50)."),
 });
 
 const transactionFields = {
@@ -166,18 +173,18 @@ const updateProductInput = z.object({
 
 const createCategoryInput = z.object({
   name: z.string().min(1).max(100),
-  priority: z.number().int().min(0).max(10).optional().describe("0–10, default 5."),
+  priority: num(z.number().int().min(0).max(10)).optional().describe("0–10, default 5."),
 });
 const updateCategoryInput = z.object({
   id: ID,
   name: z.string().min(1).max(100).optional(),
-  priority: z.number().int().min(0).max(10).optional(),
+  priority: num(z.number().int().min(0).max(10)).optional(),
 });
 
 const upsertPlanInput = z.object({
   category_id: ID,
   month: MONTH,
-  amount: z.number().min(0).describe("Planned spend for the month; 0 is allowed."),
+  amount: num(z.number().min(0)).describe("Planned spend for the month; 0 is allowed."),
 });
 
 const idInput = z.object({ id: ID });

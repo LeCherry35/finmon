@@ -77,15 +77,36 @@ export default function AssistantView({
     setPendingText(text);
     const isNew = !chat;
     startTransition(async () => {
-      const result = await sendAgentMessage(chat?.chatId ?? null, text);
+      let result: AgentResult<AgentChatState>;
+      try {
+        result = await sendAgentMessage(chat?.chatId ?? null, text);
+      } catch (err) {
+        // The request itself died (proxy timeout, dropped connection). The
+        // turn may still finish on the server, so pick up whatever landed.
+        console.error("sendAgentMessage failed:", err);
+        result = { ok: false, error: "The assistant took too long to answer. Try again in a moment." };
+        const refreshed = chat ? await loadAgentChat(chat.chatId).catch(() => null) : null;
+        if (refreshed?.ok) setChat(refreshed.data);
+        if (isNew) setChats(await listAgentChats().catch(() => chats));
+      }
       setPendingText(null);
       if (!result.ok) setDraft(text);
       apply(result);
       if (result.ok && isNew) {
         syncUrl(result.data.chatId);
-        setChats(await listAgentChats());
+        setChats(await listAgentChats().catch(() => chats));
       }
     });
+  }
+
+  /** Run a chat action, turning a thrown request (network, proxy) into an error message. */
+  async function attempt<T>(fn: () => Promise<AgentResult<T>>): Promise<AgentResult<T>> {
+    try {
+      return await fn();
+    } catch (err) {
+      console.error("Assistant request failed:", err);
+      return { ok: false, error: "Couldn't reach the assistant. Try again." };
+    }
   }
 
   function selectChat(id: number | null) {
@@ -98,7 +119,7 @@ export default function AssistantView({
     }
     if (id === chat?.chatId) return;
     startTransition(async () => {
-      const result = await loadAgentChat(id);
+      const result = await attempt(() => loadAgentChat(id));
       apply(result);
       if (result.ok) syncUrl(id);
     });
@@ -106,7 +127,7 @@ export default function AssistantView({
 
   function removeChat(id: number) {
     startTransition(async () => {
-      const result = await deleteAgentChat(id);
+      const result = await attempt(() => deleteAgentChat(id));
       if (!result.ok) {
         setError(result.error);
         return;
@@ -122,7 +143,7 @@ export default function AssistantView({
   function decide(proposalId: number, accept: boolean) {
     if (!chat) return;
     startTransition(async () => {
-      apply(await (accept ? acceptProposal : rejectProposal)(chat.chatId, proposalId));
+      apply(await attempt(() => (accept ? acceptProposal : rejectProposal)(chat.chatId, proposalId)));
     });
   }
 

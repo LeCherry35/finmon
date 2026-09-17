@@ -80,8 +80,9 @@ async function api<T>(
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
       cache: "no-store",
-      // A full agent turn (several tool calls) can take a while.
-      signal: AbortSignal.timeout(170_000),
+      // A full agent turn (several tool calls) can take a while, but the
+      // browser's request has to finish under Cloudflare's 100s origin limit.
+      signal: AbortSignal.timeout(90_000),
     });
   } catch (err) {
     console.error(`opencode ${method} ${pathname} failed:`, err);

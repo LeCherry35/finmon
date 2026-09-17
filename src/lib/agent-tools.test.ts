@@ -79,6 +79,15 @@ describe("registry", () => {
     expect(() => parseToolInput(tool("get_plans"), { month: "Sept" })).toThrow(AgentToolError);
     expect(() => parseToolInput(tool("get_plans"), { month: "Sept" })).toThrow(/month: Use YYYY-MM/);
   });
+
+  it("accepts numbers sent as numeric strings, but not other strings", () => {
+    const input = { type: "spend", date: "2026-09-17" };
+    expect(parseToolInput(tool("create_transaction"), { ...input, amount: "100" }).amount).toBe(100);
+    expect(parseToolInput(tool("get_transaction"), { id: "7" }).id).toBe(7);
+    expect(() => parseToolInput(tool("create_transaction"), { ...input, amount: "100 грн" })).toThrow(
+      /amount: .*expected number/,
+    );
+  });
 });
 
 describe("read tools", () => {
