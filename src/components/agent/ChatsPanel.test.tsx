@@ -60,3 +60,10 @@ describe("formatChatDate", () => {
     expect(formatChatDate(d, now)).toMatch(expected);
   });
 });
+
+describe("ChatsPanel while busy", () => {
+  it("disables the trigger", () => {
+    render(<ChatsPanel chats={chats} activeId={null} busy onSelect={vi.fn()} onDelete={vi.fn()} />);
+    expect(screen.getByRole("button", { name: /New chat/ })).toBeDisabled();
+  });
+});

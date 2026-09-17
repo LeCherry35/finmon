@@ -73,7 +73,7 @@ export default function ChatsPanel({
     active
       ? "border-zinc-400 text-zinc-900 hover:border-zinc-600"
       : "border-zinc-200 text-zinc-500 hover:border-zinc-300 hover:text-zinc-800",
-    busy ? "opacity-70" : "",
+    "disabled:opacity-50 disabled:cursor-not-allowed",
   ].join(" ");
 
   return (
@@ -81,6 +81,7 @@ export default function ChatsPanel({
       <button
         type="button"
         onClick={() => setOpen(!open)}
+        disabled={busy}
         className={triggerCls}
         title={`Chat: ${label}`}
         aria-expanded={open}
@@ -95,7 +96,8 @@ export default function ChatsPanel({
           <button
             type="button"
             onClick={() => select(null)}
-            className="flex w-full items-center gap-2 px-3 py-2.5 text-left font-medium text-zinc-800 hover:bg-zinc-50"
+            disabled={busy}
+            className="flex w-full items-center gap-2 px-3 py-2.5 text-left font-medium text-zinc-800 hover:bg-zinc-50 disabled:opacity-50"
           >
             <PlusIcon />
             New chat
@@ -114,7 +116,8 @@ export default function ChatsPanel({
                   <button
                     type="button"
                     onClick={() => select(c.id)}
-                    className="min-w-0 flex-1 px-3 py-2 text-left"
+                    disabled={busy}
+                    className="min-w-0 flex-1 px-3 py-2 text-left disabled:opacity-50"
                   >
                     <span className="block truncate text-zinc-800">{c.title ?? `Chat ${c.id}`}</span>
                     <span className="block text-[11px] text-zinc-400">{formatChatDate(c.created_at)}</span>

@@ -8,6 +8,18 @@ Entry shape: `## <version> — <YYYY-MM-DD> — <headline>`, then **Added / Chan
 
 ---
 
+## 0.11.3 — 2026-09-17 — Assistant buttons stuck disabled
+
+### Fixed
+- After the first message in a chat, Send stayed disabled, and a proposal's Accept/Reject stayed disabled until you switched chats (iPhone and desktop).
+- Tapping a suggestion no longer wipes what you had typed.
+- If accepting/rejecting fails (e.g. already decided), the cards refresh to their real status.
+
+### Changed
+- The assistant page always opens on a new chat (no `?chat=` in the URL). Switching and deleting chats is disabled while a reply is on its way.
+
+---
+
 ## 0.11.2 — 2026-09-17 — Assistant: string amounts, stuck chat
 
 ### Fixed

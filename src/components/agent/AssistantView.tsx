@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   acceptProposal,
   deleteAgentChat,
@@ -25,22 +25,22 @@ const SUGGESTIONS = [
 /**
  * The /assistant page body: standard page header (title + ChatsPanel in
  * FilterPanel's spot) over a conversation card. No streaming — each send
- * waits for the whole agent turn, showing a typing bubble meanwhile. The open
- * chat is mirrored to `?chat=` with history.replaceState (no server refetch).
+ * waits for the whole agent turn, showing a typing bubble meanwhile.
+ *
+ * `busy` is plain component state driven by the single-flight `run` helper,
+ * deliberately not `useTransition`: server actions and Next's patched
+ * `history.replaceState` dispatch router transitions that can entangle with
+ * ours and pin `isPending` (which left Send/Accept disabled). For the same
+ * reason the open chat isn't mirrored to the URL.
  */
-export default function AssistantView({
-  initialChats,
-  initialChat,
-}: {
-  initialChats: AgentChatSummary[];
-  initialChat: AgentChatState | null;
-}) {
+export default function AssistantView({ initialChats }: { initialChats: AgentChatSummary[] }) {
   const [chats, setChats] = useState(initialChats);
-  const [chat, setChat] = useState<AgentChatState | null>(initialChat);
+  const [chat, setChat] = useState<AgentChatState | null>(null);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pendingText, setPendingText] = useState<string | null>(null);
-  const [busy, startTransition] = useTransition();
+  const [busy, setBusy] = useState(false);
+  const inFlight = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -56,8 +56,21 @@ export default function AssistantView({
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }, [draft]);
 
-  function syncUrl(chatId: number | null) {
-    window.history.replaceState(null, "", chatId ? `/assistant?chat=${chatId}` : "/assistant");
+  /** Runs one server operation at a time; `busy` always clears, even on throw. */
+  async function run(op: () => Promise<void>, onFail?: () => void) {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setBusy(true);
+    try {
+      await op();
+    } catch (err) {
+      console.error("Assistant request failed:", err);
+      setError("Couldn't reach the assistant. Try again.");
+      onFail?.();
+    } finally {
+      inFlight.current = false;
+      setBusy(false);
+    }
   }
 
   function apply(result: AgentResult<AgentChatState>) {
@@ -69,81 +82,92 @@ export default function AssistantView({
     }
   }
 
-  function send(raw: string) {
+  /** `fromInput`: the text is the composer draft (clear it, restore on failure);
+   *  suggestion chips leave whatever the user has typed alone. */
+  function send(raw: string, fromInput: boolean) {
     const text = raw.trim();
-    if (!text || busy) return;
-    setDraft("");
+    if (!text || inFlight.current) return;
+    const chatId = chat?.chatId ?? null;
+    // Put the text back unless something new was typed meanwhile.
+    const restoreDraft = () => {
+      if (fromInput) setDraft((d) => d || text);
+    };
+    if (fromInput) setDraft("");
     setError(null);
     setPendingText(text);
-    const isNew = !chat;
-    startTransition(async () => {
-      let result: AgentResult<AgentChatState>;
-      try {
-        result = await sendAgentMessage(chat?.chatId ?? null, text);
-      } catch (err) {
-        // The request itself died (proxy timeout, dropped connection). The
-        // turn may still finish on the server, so pick up whatever landed.
-        console.error("sendAgentMessage failed:", err);
-        result = { ok: false, error: "The assistant took too long to answer. Try again in a moment." };
-        const refreshed = chat ? await loadAgentChat(chat.chatId).catch(() => null) : null;
-        if (refreshed?.ok) setChat(refreshed.data);
-        if (isNew) setChats(await listAgentChats().catch(() => chats));
-      }
-      setPendingText(null);
-      if (!result.ok) setDraft(text);
-      apply(result);
-      if (result.ok && isNew) {
-        syncUrl(result.data.chatId);
-        setChats(await listAgentChats().catch(() => chats));
-      }
-    });
-  }
-
-  /** Run a chat action, turning a thrown request (network, proxy) into an error message. */
-  async function attempt<T>(fn: () => Promise<AgentResult<T>>): Promise<AgentResult<T>> {
-    try {
-      return await fn();
-    } catch (err) {
-      console.error("Assistant request failed:", err);
-      return { ok: false, error: "Couldn't reach the assistant. Try again." };
-    }
+    void run(
+      async () => {
+        let result: AgentResult<AgentChatState>;
+        try {
+          result = await sendAgentMessage(chatId, text);
+        } catch (err) {
+          // The request itself died (proxy timeout, dropped connection). The
+          // turn may still finish on the server, so pick up whatever landed.
+          console.error("sendAgentMessage failed:", err);
+          result = { ok: false, error: "The assistant took too long to answer. Try again in a moment." };
+          const refreshed = chatId === null ? null : await loadAgentChat(chatId).catch(() => null);
+          if (refreshed?.ok) setChat(refreshed.data);
+        }
+        setPendingText(null);
+        apply(result);
+        if (!result.ok) {
+          restoreDraft();
+          // A new chat's row may exist even though the turn failed — show it.
+          if (chatId === null) setChats(await listAgentChats().catch(() => chats));
+          return;
+        }
+        if (chatId === null) {
+          const id = result.data.chatId;
+          const title = text.length > 60 ? `${text.slice(0, 57)}…` : text;
+          setChats((cs) =>
+            cs.some((c) => c.id === id) ? cs : [{ id, title, created_at: new Date().toISOString() }, ...cs],
+          );
+          setChats(await listAgentChats().catch(() => chats));
+        }
+      },
+      // Only reached if something unexpected throws after the request.
+      () => {
+        setPendingText(null);
+        restoreDraft();
+      },
+    );
   }
 
   function selectChat(id: number | null) {
+    if (inFlight.current) return;
     setError(null);
     if (id === null) {
       setChat(null);
-      syncUrl(null);
       inputRef.current?.focus();
       return;
     }
     if (id === chat?.chatId) return;
-    startTransition(async () => {
-      const result = await attempt(() => loadAgentChat(id));
-      apply(result);
-      if (result.ok) syncUrl(id);
-    });
+    void run(async () => apply(await loadAgentChat(id)));
   }
 
   function removeChat(id: number) {
-    startTransition(async () => {
-      const result = await attempt(() => deleteAgentChat(id));
+    void run(async () => {
+      const result = await deleteAgentChat(id);
       if (!result.ok) {
         setError(result.error);
         return;
       }
       setChats((cs) => cs.filter((c) => c.id !== id));
-      if (chat?.chatId === id) {
-        setChat(null);
-        syncUrl(null);
-      }
+      setChat((current) => (current?.chatId === id ? null : current));
     });
   }
 
   function decide(proposalId: number, accept: boolean) {
     if (!chat) return;
-    startTransition(async () => {
-      apply(await attempt(() => (accept ? acceptProposal : rejectProposal)(chat.chatId, proposalId)));
+    const chatId = chat.chatId;
+    void run(async () => {
+      const result = await (accept ? acceptProposal : rejectProposal)(chatId, proposalId);
+      apply(result);
+      if (!result.ok) {
+        // e.g. already decided elsewhere — re-sync the cards, keep the error visible.
+        const fresh = await loadAgentChat(chatId);
+        if (fresh.ok) setChat(fresh.data);
+      }
     });
   }
 
@@ -178,7 +202,7 @@ export default function AssistantView({
                   <button
                     key={s}
                     type="button"
-                    onClick={() => send(s)}
+                    onClick={() => send(s, false)}
                     disabled={busy}
                     className="rounded-full border border-zinc-200 px-3 py-1.5 text-xs text-zinc-600 hover:border-zinc-400 hover:text-zinc-900 disabled:opacity-50"
                   >
@@ -247,7 +271,7 @@ export default function AssistantView({
           className="border-t border-zinc-200 bg-zinc-50/60 px-3 py-3 md:px-6"
           onSubmit={(e) => {
             e.preventDefault();
-            send(draft);
+            send(draft, true);
           }}
         >
           <div className="flex items-end gap-2 rounded-2xl border border-zinc-300 bg-white py-1.5 pl-3 pr-1.5 focus-within:border-zinc-500">
@@ -258,7 +282,7 @@ export default function AssistantView({
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
-                  send(draft);
+                  send(draft, true);
                 }
               }}
               rows={1}
