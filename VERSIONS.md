@@ -8,6 +8,17 @@ Entry shape: `## <version> — <YYYY-MM-DD> — <headline>`, then **Added / Chan
 
 ---
 
+## 0.11.4 — 2026-09-17 — Assistant reuses existing categories
+
+### Fixed
+- The assistant could create a duplicate category that differed only in case (e.g. "food" next to "Food"). Creating a transaction — from the assistant or the form — now reuses an existing category whose name matches case-insensitively.
+
+### Changed
+- When the assistant names a category that doesn't exist, the tool replies with the user's existing categories so it can pick one; a new category is only proposed when the user asks for one, and the proposal marks it "(NEW category)".
+- An unknown category id in an assistant update also returns the list of existing categories.
+
+---
+
 ## 0.11.3 — 2026-09-17 — Assistant buttons stuck disabled
 
 ### Fixed

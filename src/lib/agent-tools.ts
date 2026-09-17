@@ -100,6 +100,22 @@ function txLabel(t: Pick<Transaction, "id" | "type" | "amount" | "date" | "store
   }`;
 }
 
+/** The user's categories plus the one matching `name` (trimmed,
+ *  case-insensitive), so "food" reuses an existing "Food". */
+async function resolveCategoryName(userId: string, name: string) {
+  const all = await getCategories(userId);
+  const key = name.trim().toLocaleLowerCase();
+  const category =
+    all.find((c) => c.name === name.trim()) ?? all.find((c) => c.name.toLocaleLowerCase() === key) ?? null;
+  return { category, all };
+}
+
+/** "3: Groceries, 5: Transport" — handed to the model when it names a category
+ *  that doesn't exist. */
+function categoryListText(all: { id: number; name: string }[]): string {
+  return all.length ? all.map((c) => `${c.id}: ${c.name}`).join(", ") : "none yet";
+}
+
 /** Keep search results compact for the model's context. */
 function compactTransaction(t: Transaction) {
   return {
@@ -138,7 +154,17 @@ const transactionFields = {
 
 const createTransactionInput = z.object({
   ...transactionFields,
-  category_name: z.string().max(100).optional().describe("Existing category name; a new category is created if it doesn't exist."),
+  category_name: z
+    .string()
+    .max(100)
+    .optional()
+    .describe(
+      "One of the user's existing categories (case-insensitive). If unsure, pass your best guess — an unknown name returns the list of existing categories.",
+    ),
+  new_category: z
+    .boolean()
+    .optional()
+    .describe("Set true only if the user explicitly wants a new category named category_name."),
 });
 
 const updateTransactionInput = z.object({
@@ -271,19 +297,35 @@ export const AGENT_TOOLS: AgentTool[] = [
     description: "Propose a new transaction. Needs at least an amount or a category.",
     input: createTransactionInput,
     requiresApproval: true,
-    describe: async (_userId, i) => {
-      if (i.amount == null && !i.category_name)
+    describe: async (userId, i) => {
+      if (i.amount == null && !i.category_name?.trim())
         throw new AgentToolError("Add an amount or a category");
+      let category = "—";
+      if (i.category_name?.trim()) {
+        const { category: match, all } = await resolveCategoryName(userId, i.category_name);
+        if (match) category = match.name;
+        else if (i.new_category) category = `${i.category_name.trim()} (NEW category)`;
+        else
+          throw new AgentToolError(
+            `Category "${i.category_name.trim()}" doesn't exist. Existing categories: ${categoryListText(all)}. ` +
+              "Use one of these, or pass new_category: true if the user wants a new one.",
+          );
+      }
       return [
         `Create ${i.type} transaction`,
         `amount: ${fmt(i.amount)}`,
         `date: ${i.date}`,
-        `category: ${fmt(i.category_name)}`,
+        `category: ${category}`,
         `store: ${fmt(i.store)}`,
         `note: ${fmt(i.note)}`,
       ].join("\n");
     },
-    run: async (userId, i) => {
+    run: async (userId, { new_category: _new, ...i }) => {
+      // Re-resolve at accept time: use the stored spelling of an existing category.
+      if (i.category_name?.trim()) {
+        const { category } = await resolveCategoryName(userId, i.category_name);
+        if (category) i.category_name = category.name;
+      }
       const r = unwrap(await createTransactionFor(userId, toFormData(i)));
       return { transaction_id: r.ok ? r.id : null };
     },
@@ -296,7 +338,9 @@ export const AGENT_TOOLS: AgentTool[] = [
     describe: async (userId, { id, ...patch }) => {
       const tx = await requireTransaction(userId, id);
       if (patch.category_id != null && !(await getCategory(userId, patch.category_id)))
-        throw new AgentToolError(`Category ${patch.category_id} not found`);
+        throw new AgentToolError(
+          `Category ${patch.category_id} not found. Existing categories: ${categoryListText(await getCategories(userId))}`,
+        );
       const lines = diffLines(tx, patch);
       if (lines.length === 0) throw new AgentToolError("Nothing would change");
       return [`Update transaction ${txLabel(tx)}`, ...lines].join("\n");

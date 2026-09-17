@@ -50,6 +50,7 @@ describe("createTransaction", () => {
 
   it("upserts the category, inserts the row with no products, and revalidates on success", async () => {
     query
+      .mockResolvedValueOnce({ rows: [] }) // case-insensitive lookup: no match
       .mockResolvedValueOnce({ rows: [{ id: 7 }] }) // category upsert
       .mockResolvedValueOnce({ rows: [{ id: 42 }] }); // transaction insert (RETURNING id)
 
@@ -67,12 +68,14 @@ describe("createTransaction", () => {
 
     // returns the new transaction id so the create UI can fire a receipt scan
     expect(result).toEqual({ successCount: 3, lastTxId: 42 });
-    // exactly: category upsert + transaction INSERT (no default product anymore)
-    expect(query).toHaveBeenCalledTimes(2);
+    // exactly: category lookup + upsert + transaction INSERT (no default product anymore)
+    expect(query).toHaveBeenCalledTimes(3);
+    expect(query.mock.calls[0][0]).toMatch(/lower\(name\) = lower\(\$2\)/);
+    expect(query.mock.calls[0][1]).toEqual([TEST_USER_ID, "Food"]);
     // category upsert: trimmed name + user id
-    expect(query.mock.calls[0][1]).toEqual(["Food", TEST_USER_ID]);
+    expect(query.mock.calls[1][1]).toEqual(["Food", TEST_USER_ID]);
     // transaction insert: amount, type, category_id, date, note, store, status, user id
-    const [txSql, txParams] = query.mock.calls[1];
+    const [txSql, txParams] = query.mock.calls[2];
     expect(txSql).toMatch(/INSERT INTO transactions/);
     expect(txSql).toMatch(/RETURNING id/);
     expect(txParams).toEqual([12.5, "spend", 7, "2026-06-01", "lunch", "Tesco", "unverified", TEST_USER_ID]);
@@ -80,6 +83,21 @@ describe("createTransaction", () => {
     expect(query.mock.calls.some(([sql]) => /INSERT INTO products/.test(sql))).toBe(false);
     expect(revalidatePath).toHaveBeenCalledWith("/transactions");
     expect(revalidatePath).toHaveBeenCalledWith("/categories");
+  });
+
+  it("reuses an existing category that differs only in case (no new category)", async () => {
+    query
+      .mockResolvedValueOnce({ rows: [{ id: 3 }] }) // lookup finds "Food"
+      .mockResolvedValueOnce({ rows: [{ id: 42 }] }); // transaction insert
+
+    await createTransaction(
+      prev,
+      formData({ amount: "12.5", type: "spend", category_name: "food", date: "2026-06-01" }),
+    );
+
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(query.mock.calls.some(([sql]) => /INSERT INTO categories/.test(sql))).toBe(false);
+    expect(query.mock.calls[1][1][2]).toBe(3);
   });
 
   it("creates without a category: no upsert, null category_id, no /categories revalidate", async () => {
@@ -114,7 +132,7 @@ describe("createTransaction", () => {
 
   it("starts the row as 'processing' when a receipt is staged (has_receipt)", async () => {
     query
-      .mockResolvedValueOnce({ rows: [{ id: 7 }] }) // category upsert
+      .mockResolvedValueOnce({ rows: [{ id: 7 }] }) // category lookup: existing
       .mockResolvedValueOnce({ rows: [{ id: 99 }] }); // transaction insert
 
     const result = await createTransaction(
@@ -135,7 +153,7 @@ describe("createTransaction", () => {
 
   it("stores an empty note as null", async () => {
     query
-      .mockResolvedValueOnce({ rows: [{ id: 1 }] }) // category upsert
+      .mockResolvedValueOnce({ rows: [{ id: 1 }] }) // category lookup: existing
       .mockResolvedValueOnce({ rows: [{ id: 2 }] }); // transaction insert
     await createTransaction(
       prev,

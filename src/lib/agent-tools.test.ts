@@ -136,8 +136,9 @@ describe("write tools", () => {
       "Nothing would change",
     );
     q.getCategory.mockResolvedValue(null);
+    q.getCategories.mockResolvedValue([]);
     await expect(describeCall("update_transaction", "user-1", { id: 9, category_id: 77 })).rejects.toThrow(
-      "Category 77 not found",
+      "Category 77 not found. Existing categories: none yet",
     );
   });
 
@@ -169,6 +170,33 @@ describe("write tools", () => {
     await expect(
       describeCall("create_transaction", "user-1", { type: "spend", date: "2026-09-17" }),
     ).rejects.toThrow("Add an amount or a category");
+  });
+
+  it("create_transaction reuses an existing category regardless of case", async () => {
+    q.getCategories.mockResolvedValue([{ id: 3, name: "Food", priority: 5 }]);
+    const input = { type: "spend", amount: 5, date: "2026-09-17", category_name: "food" };
+    expect(await describeCall("create_transaction", "user-1", input)).toContain("category: Food\n");
+    m.createTransactionFor.mockResolvedValue({ ok: true, id: 11 });
+    await run("create_transaction", "user-1", input);
+    expect(fields(m.createTransactionFor.mock.calls[0][1]).category_name).toBe("Food");
+    expect(q.getCategories).toHaveBeenCalledWith("user-1");
+  });
+
+  it("create_transaction returns the existing categories for an unknown name", async () => {
+    q.getCategories.mockResolvedValue([
+      { id: 3, name: "Food", priority: 5 },
+      { id: 4, name: "Transport", priority: 5 },
+    ]);
+    const input = { type: "spend", amount: 5, date: "2026-09-17", category_name: "Groceries" };
+    await expect(describeCall("create_transaction", "user-1", input)).rejects.toThrow(
+      /doesn't exist\. Existing categories: 3: Food, 4: Transport/,
+    );
+    expect(
+      await describeCall("create_transaction", "user-1", { ...input, new_category: true }),
+    ).toContain("category: Groceries (NEW category)");
+    m.createTransactionFor.mockResolvedValue({ ok: true, id: 11 });
+    await run("create_transaction", "user-1", { ...input, new_category: true });
+    expect(fields(m.createTransactionFor.mock.calls[0][1])).not.toHaveProperty("new_category");
   });
 
   it("delete_product checks the product belongs to the user before and when applying", async () => {

@@ -53,13 +53,24 @@ export async function createTransactionFor(
 
   let category_id: number | null = null;
   if (categoryName) {
-    const { rows } = await pool.query<{ id: number }>(
-      `INSERT INTO categories (name, user_id) VALUES ($1, $2)
-       ON CONFLICT (user_id, name) DO UPDATE SET name = EXCLUDED.name
-       RETURNING id`,
-      [categoryName, userId]
+    // Reuse an existing category that differs only in case ("food" → "Food");
+    // an exact spelling wins if both exist.
+    const { rows: existing } = await pool.query<{ id: number }>(
+      `SELECT id FROM categories WHERE user_id = $1 AND lower(name) = lower($2)
+       ORDER BY (name = $2) DESC, id LIMIT 1`,
+      [userId, categoryName]
     );
-    category_id = rows[0].id;
+    if (existing.length > 0) {
+      category_id = existing[0].id;
+    } else {
+      const { rows } = await pool.query<{ id: number }>(
+        `INSERT INTO categories (name, user_id) VALUES ($1, $2)
+         ON CONFLICT (user_id, name) DO UPDATE SET name = EXCLUDED.name
+         RETURNING id`,
+        [categoryName, userId]
+      );
+      category_id = rows[0].id;
+    }
   }
 
   // A transaction starts with no products: they're an optional breakdown the
