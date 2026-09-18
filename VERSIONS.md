@@ -8,6 +8,19 @@ Entry shape: `## <version> — <YYYY-MM-DD> — <headline>`, then **Added / Chan
 
 ---
 
+## 0.12.0 — 2026-09-18 — Assistant can use a LiteLLM-served model
+
+### Added
+- The assistant can run on any model behind a LiteLLM (OpenAI-compatible) server: set `AGENT_MODEL=litellm/<model>`, `LITELLM_BASE_URL` and `LITELLM_API_KEY`. Other `AGENT_MODEL` prefixes (`openai/`, `anthropic/`, `opencode/`) work as before.
+
+### Changed
+- A user's assistant config is rewritten whenever it no longer matches the server's settings (not only when its token rotates), so changing `AGENT_MODEL` takes effect on the next message for everyone.
+
+### Deploy notes
+- To use LiteLLM, add `AGENT_MODEL=litellm/<model>`, `LITELLM_BASE_URL=https://<host>/v1` and `LITELLM_API_KEY` to `.env`, then `docker compose up -d --build` (compose now passes `LITELLM_API_KEY` to the `opencode` container). The model must support tool calling.
+
+---
+
 ## 0.11.4 — 2026-09-17 — Assistant reuses existing categories
 
 ### Fixed

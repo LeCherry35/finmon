@@ -16,12 +16,39 @@ Rules:
 - Dates are YYYY-MM-DD, months are YYYY-MM. Amounts are in the user's currency; don't add a currency symbol.
 - Be concise. Use short lists or small tables for numbers.`;
 
-export function buildOpencodeConfig(token: string, e: { mcpUrl: string; model: string }) {
+/** Provider key for a LiteLLM (OpenAI-compatible) server: AGENT_MODEL=litellm/<model>. */
+export const LITELLM_PROVIDER = "litellm";
+
+/**
+ * Custom opencode provider for `litellm/<model>` models. The API key stays an
+ * `{env:…}` placeholder, resolved from the opencode process's environment, so
+ * the real key is never written into the per-user config files.
+ */
+function litellmProvider(model: string, baseURL: string | undefined) {
+  const prefix = `${LITELLM_PROVIDER}/`;
+  if (!baseURL || !model.startsWith(prefix)) return undefined;
+  const modelId = model.slice(prefix.length);
+  return {
+    [LITELLM_PROVIDER]: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "LiteLLM",
+      options: { baseURL, apiKey: "{env:LITELLM_API_KEY}" },
+      models: { [modelId]: { name: modelId } },
+    },
+  };
+}
+
+export function buildOpencodeConfig(
+  token: string,
+  e: { mcpUrl: string; model: string; litellmBaseUrl?: string },
+) {
   const denyAll = { "*": "deny", [`${MCP_KEY}_*`]: "allow" };
+  const provider = litellmProvider(e.model, e.litellmBaseUrl);
   return {
     $schema: "https://opencode.ai/config.json",
     model: e.model,
     small_model: e.model,
+    ...(provider && { provider }),
     default_agent: AGENT_NAME,
     share: "disabled",
     autoupdate: false,

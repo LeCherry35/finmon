@@ -62,6 +62,8 @@ services:
       OPENCODE_SERVER_PASSWORD: ${OPENCODE_SERVER_PASSWORD:?set OPENCODE_SERVER_PASSWORD in .env}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # For AGENT_MODEL=litellm/<model>; referenced as {env:LITELLM_API_KEY} in the per-user configs.
+      LITELLM_API_KEY: ${LITELLM_API_KEY:-}
     volumes:
       - agent-workspaces:/agents:ro
       - opencode-data:/home/agent/.local/share/opencode

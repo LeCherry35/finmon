@@ -32,6 +32,8 @@ AGENT_WORKSPACE_ROOT=<any writable dir>
 AGENT_MODEL=opencode/big-pickle
 ```
 
+To use a model behind a LiteLLM server instead, set `AGENT_MODEL=litellm/<model>` and `LITELLM_BASE_URL=https://<host>/v1` in `.env`, and put `LITELLM_API_KEY` in the **opencode** process's env (not the app's).
+
 "The assistant returned an error" with a 401 in the dev log means the two passwords differ.
 
 ## Test account

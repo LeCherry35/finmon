@@ -30,6 +30,8 @@ type Env = {
   /** The same dirs as the opencode process sees them (differs across containers only if mounted elsewhere). */
   opencodeWorkspaceRoot: string;
   model: string;
+  /** Base URL (usually ending in /v1) for `litellm/<model>` models. */
+  litellmBaseUrl: string | undefined;
 };
 
 export class AgentUnavailableError extends Error {}
@@ -48,6 +50,7 @@ function env(): Env {
     workspaceRoot,
     opencodeWorkspaceRoot: process.env.OPENCODE_WORKSPACE_ROOT || workspaceRoot,
     model: process.env.AGENT_MODEL || "openai/gpt-4.1-mini",
+    litellmBaseUrl: process.env.LITELLM_BASE_URL || undefined,
   };
 }
 
@@ -106,10 +109,11 @@ async function ensureUserInstance(userId: string, e: Env): Promise<string> {
   const opencodeDir = path.posix.join(e.opencodeWorkspaceRoot.replace(/\\/g, "/"), name);
   const configPath = path.join(localDir, "opencode.json");
 
+  let raw: string | null = null;
   let current: string | null = null;
   try {
-    const cfg = JSON.parse(await readFile(configPath, "utf8"));
-    const header: string | undefined = cfg?.mcp?.[MCP_KEY]?.headers?.Authorization;
+    raw = await readFile(configPath, "utf8");
+    const header: string | undefined = JSON.parse(raw)?.mcp?.[MCP_KEY]?.headers?.Authorization;
     current = header?.startsWith("Bearer ") ? header.slice(7) : null;
   } catch {
     // missing or unreadable → (re)write below
@@ -118,14 +122,18 @@ async function ensureUserInstance(userId: string, e: Env): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   const stillValid =
     current && verifyAgentToken(current, now + TOKEN_REFRESH_MARGIN_SECONDS) === userId;
-  if (stillValid) return opencodeDir;
+  // Keep a valid token, but still rewrite if anything else changed (e.g.
+  // AGENT_MODEL switched provider) so env changes reach existing users.
+  const token = stillValid ? current! : signAgentToken(userId, now).token;
+  const next = JSON.stringify(buildOpencodeConfig(token, e), null, 2);
+  if (next === raw) return opencodeDir;
 
-  const { token } = signAgentToken(userId, now);
   await mkdir(localDir, { recursive: true });
-  await writeFile(configPath, JSON.stringify(buildOpencodeConfig(token, e), null, 2), { mode: 0o600 });
-  if (current) {
-    // A running instance cached the old config — drop it so the new token loads.
+  await writeFile(configPath, next, { mode: 0o600 });
+  if (raw !== null) {
+    // A running instance cached the old config — drop it so the new one loads.
     await api(e, "POST", "/instance/dispose", opencodeDir).catch(() => {});
+    lockdownVerified.delete(opencodeDir);
   }
   return opencodeDir;
 }
