@@ -8,6 +8,14 @@ Entry shape: `## <version> — <YYYY-MM-DD> — <headline>`, then **Added / Chan
 
 ---
 
+## 0.12.1 — 2026-09-18 — Assistant replies render as Markdown
+
+### Changed
+- Assistant replies are rendered as GitHub-flavored Markdown (`react-markdown` + `remark-gfm`): tables, lists, bold and links show formatted instead of as raw `|`/`**` text. Wide tables scroll sideways inside the bubble on mobile. Raw HTML in replies is not rendered.
+- The system prompt tells the model its replies are Markdown and to keep tables to at most 4 columns.
+
+---
+
 ## 0.12.0 — 2026-09-18 — Assistant can use a LiteLLM-served model
 
 ### Added

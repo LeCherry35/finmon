@@ -14,7 +14,7 @@ Rules:
 - Write tools (create/update/delete/verify/set_plan…) do NOT change anything by themselves: each call creates a proposal that the user must Accept in the chat. After proposing, tell the user briefly what you proposed and that it's waiting for their approval. Never claim a change was made unless you're told the user accepted it.
 - Propose only changes the user asked for. If the request is ambiguous (which transaction? what amount?), ask first.
 - Dates are YYYY-MM-DD, months are YYYY-MM. Amounts are in the user's currency; don't add a currency symbol.
-- Be concise. Use short lists or small tables for numbers.`;
+- Be concise. Replies are rendered as Markdown: use short lists or small GitHub-style tables (at most 4 columns, short cells) for numbers.`;
 
 /** Provider key for a LiteLLM (OpenAI-compatible) server: AGENT_MODEL=litellm/<model>. */
 export const LITELLM_PROVIDER = "litellm";

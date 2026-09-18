@@ -12,6 +12,7 @@ import {
   type AgentChatSummary,
   type AgentResult,
 } from "@/actions/agent";
+import AssistantMarkdown from "@/components/agent/AssistantMarkdown";
 import ChatsPanel from "@/components/agent/ChatsPanel";
 import ProposalCard from "@/components/agent/ProposalCard";
 import { SendIcon, SparkIcon, WarnIcon } from "@/components/agent/icons";
@@ -218,7 +219,11 @@ export default function AssistantView({ initialChats }: { initialChats: AgentCha
                   <UserBubble key={m.id} text={m.text} />
                 ) : (
                   <AssistantRow key={m.id}>
-                    {m.text && <div className={ASSISTANT_BUBBLE}>{m.text}</div>}
+                    {m.text && (
+                      <div className={`${ASSISTANT_BUBBLE} break-words`}>
+                        <AssistantMarkdown text={m.text} />
+                      </div>
+                    )}
                     {m.tools.map((t, i) => {
                       const proposal = t.proposalId !== null ? chat.proposals[t.proposalId] : undefined;
                       if (proposal) {
@@ -310,7 +315,7 @@ export default function AssistantView({ initialChats }: { initialChats: AgentCha
 }
 
 const ASSISTANT_BUBBLE =
-  "whitespace-pre-wrap rounded-2xl rounded-bl-sm bg-zinc-100 px-3.5 py-2 text-sm text-zinc-800";
+  "rounded-2xl rounded-bl-sm bg-zinc-100 px-3.5 py-2 text-sm text-zinc-800";
 
 function UserBubble({ text }: { text: string }) {
   return (
