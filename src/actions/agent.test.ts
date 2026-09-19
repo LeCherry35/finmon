@@ -37,9 +37,19 @@ import {
   stopAgentMessage,
 } from "@/actions/agent";
 
-const chatRow = { id: 5, opencode_session_id: "ses_1" };
+const chatRow = { id: 5, opencode_session_id: "ses_1", model: null };
+const DEFAULT = "opencode/big-pickle";
+let clock = Date.parse("2026-09-19T00:00:00Z");
 
 beforeEach(() => {
+  // A minute apart, so the per-user prompt rate limit never carries between tests.
+  clock += 61_000;
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(clock);
+  vi.stubEnv("AGENT_MODEL", DEFAULT);
+  vi.stubEnv("AGENT_OPENCODE_MODELS", "openai/gpt-4.1-mini");
+  vi.stubEnv("AGENT_LITELLM_MODELS", "");
+  vi.stubEnv("LITELLM_BASE_URL", "");
   query.mockReset();
   decideProposal.mockReset();
   getProposals.mockReset().mockResolvedValue([]);
@@ -67,16 +77,16 @@ describe("sendAgentMessage", () => {
 
   it("starts a new chat, records it for the user, and prompts it", async () => {
     oc.createAgentSession.mockResolvedValue("ses_new");
-    query.mockResolvedValueOnce({ rows: [{ id: 7, opencode_session_id: "ses_new" }] });
+    query.mockResolvedValueOnce({ rows: [{ id: 7, opencode_session_id: "ses_new", model: null }] });
 
     const result = await sendAgentMessage(null, "How much did I spend?");
 
     expect(oc.createAgentSession).toHaveBeenCalledWith(TEST_USER_ID, "How much did I spend?");
     expect(query.mock.calls[0][0]).toMatch(/INSERT INTO agent_chats/);
-    expect(query.mock.calls[0][1]).toEqual([TEST_USER_ID, "ses_new", "How much did I spend?"]);
-    expect(oc.sendAgentPrompt).toHaveBeenCalledWith(TEST_USER_ID, "ses_new", "How much did I spend?");
+    expect(query.mock.calls[0][1]).toEqual([TEST_USER_ID, "ses_new", "How much did I spend?", null]);
+    expect(oc.sendAgentPrompt).toHaveBeenCalledWith(TEST_USER_ID, "ses_new", "How much did I spend?", "chat", DEFAULT);
     // Only starts the turn: it's reported running even before opencode says busy.
-    expect(result).toEqual({ ok: true, data: { chatId: 7, messages: [], proposals: {}, running: true } });
+    expect(result).toEqual({ ok: true, data: { chatId: 7, messages: [], proposals: {}, running: true, model: DEFAULT } });
   });
 
   it("stores an attached photo and prompts in receipt mode with only a marker", async () => {
@@ -141,6 +151,62 @@ describe("sendAgentMessage", () => {
     expect(getProposals).toHaveBeenCalledWith(TEST_USER_ID, [12]);
     expect(result.ok && result.data.proposals).toEqual({ 12: { id: 12, status: "pending" } });
   });
+
+  it("rejects a model that isn't configured", async () => {
+    expect(await sendAgentMessage(null, "hi", null, "anthropic/claude-opus-5")).toEqual({
+      ok: false,
+      error: "Unknown model",
+    });
+    expect(query).not.toHaveBeenCalled();
+    expect(oc.sendAgentPrompt).not.toHaveBeenCalled();
+  });
+
+  it("records the picked model on a new chat and runs the message on it", async () => {
+    oc.createAgentSession.mockResolvedValue("ses_new");
+    query.mockResolvedValueOnce({ rows: [{ id: 7, opencode_session_id: "ses_new", model: "openai/gpt-4.1-mini" }] });
+
+    const result = await sendAgentMessage(null, "hi", null, "openai/gpt-4.1-mini");
+
+    expect(query.mock.calls[0][1]).toEqual([TEST_USER_ID, "ses_new", "hi", "openai/gpt-4.1-mini"]);
+    expect(oc.sendAgentPrompt).toHaveBeenCalledWith(TEST_USER_ID, "ses_new", "hi", "chat", "openai/gpt-4.1-mini");
+    expect(query.mock.calls.some(([sql]) => /UPDATE agent_chats SET model/.test(sql))).toBe(false);
+    expect(result.ok && result.data.model).toBe("openai/gpt-4.1-mini");
+  });
+
+  it("switches an existing chat to the picked model", async () => {
+    query.mockResolvedValueOnce({ rows: [chatRow] }).mockResolvedValue({ rows: [] });
+
+    const result = await sendAgentMessage(5, "hi", null, "openai/gpt-4.1-mini");
+
+    expect(oc.sendAgentPrompt).toHaveBeenCalledWith(TEST_USER_ID, "ses_1", "hi", "chat", "openai/gpt-4.1-mini");
+    const update = query.mock.calls.find(([sql]) => /UPDATE agent_chats SET model/.test(sql));
+    expect(update?.[1]).toEqual(["openai/gpt-4.1-mini", 5, TEST_USER_ID]);
+    expect(result.ok && result.data.model).toBe("openai/gpt-4.1-mini");
+  });
+
+  it("keeps using the chat's model when none is picked, and the default once it's no longer offered", async () => {
+    query.mockResolvedValueOnce({ rows: [{ ...chatRow, model: "openai/gpt-4.1-mini" }] });
+    await sendAgentMessage(5, "hi");
+    expect(oc.sendAgentPrompt).toHaveBeenLastCalledWith(TEST_USER_ID, "ses_1", "hi", "chat", "openai/gpt-4.1-mini");
+
+    query.mockResolvedValueOnce({ rows: [{ ...chatRow, model: "gone/model" }] });
+    const result = await sendAgentMessage(5, "hi");
+    expect(oc.sendAgentPrompt).toHaveBeenLastCalledWith(TEST_USER_ID, "ses_1", "hi", "chat", DEFAULT);
+    expect(result.ok && result.data.model).toBe(DEFAULT);
+    expect(query.mock.calls.some(([sql]) => /UPDATE agent_chats SET model/.test(sql))).toBe(false);
+  });
+
+  it("runs a photo turn on the default without changing the chat's model", async () => {
+    query
+      .mockResolvedValueOnce({ rows: [{ ...chatRow, model: "openai/gpt-4.1-mini" }] })
+      .mockResolvedValueOnce({ rows: [{ id: 42 }] });
+
+    const result = await sendAgentMessage(5, "", "data:image/jpeg;base64,AAAA", "openai/gpt-4.1-mini");
+
+    expect(oc.sendAgentPrompt).toHaveBeenCalledWith(TEST_USER_ID, "ses_1", "[Image attached: receipt #42]", "receipt");
+    expect(query.mock.calls.some(([sql]) => /UPDATE agent_chats SET model/.test(sql))).toBe(false);
+    expect(result.ok && result.data.model).toBe("openai/gpt-4.1-mini");
+  });
 });
 
 describe("stopAgentMessage", () => {
@@ -174,7 +240,7 @@ describe("stopAgentMessage", () => {
     expect(result).toEqual({
       ok: true,
       data: {
-        state: { chatId: 5, messages: [], proposals: {}, running: false },
+        state: { chatId: 5, messages: [], proposals: {}, running: false, model: DEFAULT },
         text: "delete everything",
         attachmentId: null,
       },

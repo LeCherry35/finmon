@@ -1,5 +1,6 @@
 import "server-only";
 import { pool } from "@/db";
+import { effectiveModel } from "@/lib/agent-models";
 import { decideProposal, getProposals, type AgentProposal } from "@/lib/agent-proposals";
 import {
   AgentUnavailableError,
@@ -20,6 +21,8 @@ export type AgentChatState = {
   proposals: Record<number, AgentProposal>;
   /** The agent is still working on a turn (the page polls until it's done). */
   running: boolean;
+  /** The model the chat's next message runs on (stored choice if still offered, else the default). */
+  model: string;
 };
 
 export type AgentResult<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -40,7 +43,12 @@ export function proposalIds(messages: AgentMessage[]): number[] {
   return messages.flatMap((m) => m.tools.map((t) => t.proposalId)).filter((id): id is number => id !== null);
 }
 
-export async function chatState(userId: string, chatId: number, sessionId: string): Promise<AgentChatState> {
+export async function chatState(
+  userId: string,
+  chatId: number,
+  sessionId: string,
+  storedModel: string | null = null,
+): Promise<AgentChatState> {
   const [messages, running] = await Promise.all([
     getAgentMessages(userId, sessionId),
     isSessionBusy(userId, sessionId),
@@ -55,7 +63,7 @@ export async function chatState(userId: string, chatId: number, sessionId: strin
     );
   }
   const proposals = Object.fromEntries((await getProposals(userId, ids)).map((p) => [p.id, p]));
-  return { chatId, messages, proposals, running };
+  return { chatId, messages, proposals, running, model: effectiveModel(storedModel) };
 }
 
 /** Reject proposals nothing can accept any more (deleted chat or stopped turn). */

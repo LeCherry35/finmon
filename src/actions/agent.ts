@@ -13,6 +13,7 @@ import {
   type AgentChatState as ChatState,
   type AgentResult as Result,
 } from "@/lib/agent-chats";
+import { effectiveModel, isAllowedModel } from "@/lib/agent-models";
 import { parseImageDataUrl } from "@/lib/image-data-url";
 import {
   AgentUnavailableError,
@@ -41,7 +42,7 @@ const MAX_MESSAGE_LENGTH = 2000;
 const MAX_IMAGE_DATA_URL_LENGTH = 3_500_000;
 const RECEIPT_CHAT_TITLE = "Receipt scan";
 
-type ChatRow = { id: number; opencode_session_id: string };
+type ChatRow = { id: number; opencode_session_id: string; model: string | null };
 const RATE_WINDOW_MS = 60_000;
 const RATE_MAX_PROMPTS = 10;
 
@@ -63,8 +64,8 @@ function rateLimited(userId: string): boolean {
 
 async function ownedChat(userId: string, chatId: number) {
   if (!Number.isInteger(chatId) || chatId <= 0) return null;
-  const { rows } = await pool.query<{ id: number; opencode_session_id: string }>(
-    "SELECT id, opencode_session_id FROM agent_chats WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL",
+  const { rows } = await pool.query<ChatRow>(
+    "SELECT id, opencode_session_id, model FROM agent_chats WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL",
     [chatId, userId],
   );
   return rows[0] ?? null;
@@ -113,7 +114,7 @@ export async function loadAgentChat(chatId: number): Promise<AgentResult<AgentCh
   const { id: userId } = await requireUser();
   const chat = await ownedChat(userId, chatId);
   if (!chat) return { ok: false, error: "Chat not found" };
-  return guard(() => chatState(userId, chat.id, chat.opencode_session_id));
+  return guard(() => chatState(userId, chat.id, chat.opencode_session_id, chat.model));
 }
 
 /** Send a message. With no chatId a new chat is started. Only *starts* the
@@ -124,11 +125,16 @@ export async function loadAgentChat(chatId: number): Promise<AgentResult<AgentCh
  *  `image` (a `data:image/…` URL) attaches a receipt photo: it's stored in
  *  agent_attachments, the agent only gets an "[Image attached: receipt #id]"
  *  marker, and the turn runs in receipt mode (scan_receipt + create_transaction
- *  only). The text is optional then. */
+ *  only) on the default model. The text is optional then.
+ *
+ *  `model` (one of agentModels()) runs this message on that model and becomes
+ *  the chat's model; omitted, the chat's own (or the default) is used. A photo
+ *  turn ignores it and leaves the chat's model alone. */
 export async function sendAgentMessage(
   chatId: number | null,
   rawText: string,
   image?: string | null,
+  model?: string | null,
 ): Promise<AgentResult<AgentChatState>> {
   const { id: userId } = await requireUser();
   const text = validText(rawText, !!image);
@@ -139,6 +145,8 @@ export async function sendAgentMessage(
     photo = parseImageDataUrl(image);
     if (!photo) return { ok: false, error: "That file isn't an image" };
   }
+  if (model != null && !isAllowedModel(model)) return { ok: false, error: "Unknown model" };
+  const chosen = photo ? null : (model ?? null);
 
   let chat = chatId === null ? null : await ownedChat(userId, chatId);
   if (chatId !== null && !chat) return { ok: false, error: "Chat not found" };
@@ -152,15 +160,19 @@ export async function sendAgentMessage(
       const title = !text ? RECEIPT_CHAT_TITLE : text.length > 60 ? `${text.slice(0, 57)}…` : text;
       const sessionId = await createAgentSession(userId, title);
       const { rows } = await pool.query<ChatRow>(
-        `INSERT INTO agent_chats (user_id, opencode_session_id, title)
-         VALUES ($1, $2, $3) RETURNING id, opencode_session_id`,
-        [userId, sessionId, title],
+        `INSERT INTO agent_chats (user_id, opencode_session_id, title, model)
+         VALUES ($1, $2, $3, $4) RETURNING id, opencode_session_id, model`,
+        [userId, sessionId, title, chosen],
       );
       chat = rows[0];
     }
 
     if (!photo) {
-      await sendAgentPrompt(userId, chat.opencode_session_id, text);
+      await sendAgentPrompt(userId, chat.opencode_session_id, text, "chat", effectiveModel(chosen ?? chat.model));
+      if (chosen && chosen !== chat.model) {
+        await pool.query("UPDATE agent_chats SET model = $1 WHERE id = $2 AND user_id = $3", [chosen, chat.id, userId]);
+        chat = { ...chat, model: chosen };
+      }
     } else {
       const { rows } = await pool.query<{ id: number }>(
         `INSERT INTO agent_attachments (user_id, chat_id, image, content_type)
@@ -173,7 +185,7 @@ export async function sendAgentMessage(
     }
     // opencode may not report the session busy for a moment after accepting
     // the prompt — the turn was just started, so it is running.
-    return { ...(await chatState(userId, chat.id, chat.opencode_session_id)), running: true };
+    return { ...(await chatState(userId, chat.id, chat.opencode_session_id, chat.model)), running: true };
   });
 }
 
@@ -203,7 +215,7 @@ export async function stopAgentMessage(chatId: number): Promise<AgentResult<Stop
         [chat.id, userId],
       );
     } else {
-      state = await chatState(userId, chat.id, sessionId);
+      state = await chatState(userId, chat.id, sessionId, chat.model);
     }
     return { state, text: undone.text, attachmentId: undone.attachmentId };
   });
@@ -222,7 +234,7 @@ async function decide(
   const result = await decideWithNote(userId, proposalId, decision);
   if (!result.ok) return result;
   revalidatePath("/suggestions");
-  return guard(() => chatState(userId, chat.id, chat.opencode_session_id));
+  return guard(() => chatState(userId, chat.id, chat.opencode_session_id, chat.model));
 }
 
 export async function acceptProposal(chatId: number, proposalId: number) {

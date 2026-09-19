@@ -21,6 +21,8 @@ vi.mock("@/lib/opencode", () => ({
 import { STILL_RUNNING, chatState, decideWithNote, rejectPendingProposals } from "@/lib/agent-chats";
 
 beforeEach(() => {
+  vi.stubEnv("AGENT_MODEL", "");
+  vi.stubEnv("AGENT_OPENCODE_MODELS", "opencode/big-pickle");
   query.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
   getProposals.mockReset().mockResolvedValue([]);
   oc.getAgentMessages.mockReset().mockResolvedValue([]);
@@ -32,7 +34,13 @@ beforeEach(() => {
 describe("chatState", () => {
   it.each([true, false])("reports whether the session is running (%s)", async (busy) => {
     oc.isSessionBusy.mockResolvedValue(busy);
-    expect(await chatState("user-1", 5, "ses_1")).toEqual({ chatId: 5, messages: [], proposals: {}, running: busy });
+    expect(await chatState("user-1", 5, "ses_1")).toEqual({
+      chatId: 5,
+      messages: [],
+      proposals: {},
+      running: busy,
+      model: "openai/gpt-4.1-mini",
+    });
     expect(oc.isSessionBusy).toHaveBeenCalledWith("user-1", "ses_1");
   });
 
@@ -47,6 +55,11 @@ describe("chatState", () => {
     // …and links them to this chat if creation couldn't tell.
     expect(query.mock.calls[0][0]).toMatch(/SET chat_id = \$1[\s\S]*chat_id IS NULL/);
     expect(query.mock.calls[0][1]).toEqual([5, "user-1", [12]]);
+  });
+
+  it("reports the chat's stored model while it's still offered, else the default", async () => {
+    expect((await chatState("user-1", 5, "ses_1", "opencode/big-pickle")).model).toBe("opencode/big-pickle");
+    expect((await chatState("user-1", 5, "ses_1", "gone/model")).model).toBe("openai/gpt-4.1-mini");
   });
 
   it("links nothing when no proposals are referenced", async () => {

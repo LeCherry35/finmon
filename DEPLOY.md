@@ -97,6 +97,8 @@ Set at minimum:
   start without it); the app uses it to talk to the `opencode` container.
 - `AGENT_MODEL` — the assistant's model, e.g. `opencode/big-pickle` (free, no key), or
   `litellm/<model>` for a LiteLLM server (plus `LITELLM_BASE_URL` and `LITELLM_API_KEY`).
+- Optional `AGENT_OPENCODE_MODELS` / `AGENT_LITELLM_MODELS` — extra models users can pick
+  per chat in the assistant (`AGENT_MODEL` stays the default).
 
 The compose file sets `SQL_DB_HOST=db`, `SQL_DB_PORT=5432`, and `SQL_DB_SSL=false`
 for the app automatically — don't put those in `.env`.
@@ -274,6 +276,8 @@ Set in `.env` on the server (template: `.env.production.example`).
 | `ANTHROPIC_API_KEY` | optional | Only for `anthropic/*` models. |
 | `LITELLM_BASE_URL` | optional | Only for `litellm/<model>` models: the LiteLLM server's OpenAI-compatible base URL, usually ending in `/v1`. Read by the app, written into each user's opencode config. The model must support tool calling. |
 | `LITELLM_API_KEY` | optional | Only for `litellm/*` models. Passed to the `opencode` container only; the per-user configs reference it as `{env:LITELLM_API_KEY}`. |
+| `AGENT_OPENCODE_MODELS` | optional | Extra selectable assistant models, comma-separated `provider/model` ids opencode serves itself (e.g. `openai/gpt-4.1-mini,anthropic/claude-sonnet-5`; keys as for `AGENT_MODEL`). With more than one model configured the chat shows a model picker; the choice is per chat. `AGENT_MODEL` is always offered, is the default for new chats and always runs receipt-photo turns. Only list models that support tool calling. |
+| `AGENT_LITELLM_MODELS` | optional | Extra selectable models served by LiteLLM, comma-separated by their LiteLLM name; the `litellm/` prefix is optional (e.g. `qwen/qwen3-32b,llama-3.3-70b`). Ignored without `LITELLM_BASE_URL`. All of them are registered in every user's opencode config. |
 | `AGENT_TOKEN_SECRET` | optional | HMAC secret for the per-user MCP tokens; defaults to `BETTER_AUTH_SECRET`. |
 
 Set by `docker-compose.yml` (do **not** put these in `.env`): `NODE_ENV=production`,
@@ -325,6 +329,6 @@ HTTPS is in place (Cloudflare + nginx) and session cookies are `Secure`
 | Limitation | Where | Why / current state | Resolved by |
 |---|---|---|---|
 | **Assistant rate limit is per process** | `src/actions/agent.ts` | 10 prompts/min per user, kept in memory — resets on restart, not shared across replicas. Fine for one app container. | A DB- or Redis-backed limiter if the app scales out. |
-| **Assistant model is external** | `AGENT_MODEL` | Prompts and the finance data the tools return go to the model provider (OpenCode Zen for `opencode/*` free models; your LiteLLM server — and whatever it routes to — for `litellm/*`). Free models have their own data terms — check them. | Pick a provider/model whose data policy fits. |
+| **Assistant model is external** | `AGENT_MODEL`, `AGENT_OPENCODE_MODELS`, `AGENT_LITELLM_MODELS` | Prompts and the finance data the tools return go to the provider of the model a chat uses; any user can pick any listed model (OpenCode Zen for `opencode/*` free models; your LiteLLM server — and whatever it routes to — for `litellm/*`). Free models have their own data terms — check them. | Pick a provider/model whose data policy fits. |
 | **opencode version pinned** | `opencode/Dockerfile` (`OPENCODE_VERSION`) | The tool lockdown was verified against 1.18.28; `assertToolLockdown` fails closed if a new version changes the resolved permissions. | Bump deliberately and re-test the chat. |
 | **Email auth flows disabled** | `src/lib/auth.ts` (commented hooks), `src/lib/email.ts` | Email verification, password reset, and verification emails are commented out — sign-up has no verification gate and auto signs in. | Re-enable the commented Better Auth hooks once `RESEND_API_KEY` / `RESEND_FROM_EMAIL` are set. |

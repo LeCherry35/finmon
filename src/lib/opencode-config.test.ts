@@ -54,6 +54,21 @@ describe("buildOpencodeConfig", () => {
     });
   });
 
+  it("registers every selectable LiteLLM model, whatever the default is", () => {
+    const c = buildOpencodeConfig("tok", {
+      mcpUrl: "x",
+      model: "opencode/big-pickle",
+      litellmBaseUrl: "https://llm.example.com/v1",
+      litellmModels: ["qwen/qwen3-32b", "llama-3.3-70b"],
+    });
+    expect(c.model).toBe("opencode/big-pickle");
+    expect(c.provider?.litellm.models).toEqual({
+      "qwen/qwen3-32b": { name: "qwen/qwen3-32b" },
+      "llama-3.3-70b": { name: "llama-3.3-70b" },
+    });
+    expect(c.provider?.litellm.options.apiKey).toBe("{env:LITELLM_API_KEY}");
+  });
+
   it("adds no LiteLLM provider without a base URL", () => {
     expect(buildOpencodeConfig("tok", { mcpUrl: "x", model: "litellm/m" })).not.toHaveProperty("provider");
   });

@@ -2,6 +2,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { agentModels } from "@/lib/agent-models";
 import { signAgentToken, verifyAgentToken } from "@/lib/agent-token";
 import { AGENT_NAME, MCP_KEY, RECEIPT_SYSTEM_PROMPT, buildOpencodeConfig } from "@/lib/opencode-config";
 
@@ -29,9 +30,12 @@ type Env = {
   workspaceRoot: string;
   /** The same dirs as the opencode process sees them (differs across containers only if mounted elsewhere). */
   opencodeWorkspaceRoot: string;
+  /** The default model (AGENT_MODEL). */
   model: string;
   /** Base URL (usually ending in /v1) for `litellm/<model>` models. */
   litellmBaseUrl: string | undefined;
+  /** Selectable LiteLLM model ids, registered in every user's config. */
+  litellmModels: string[];
 };
 
 export class AgentUnavailableError extends Error {}
@@ -43,14 +47,16 @@ function env(): Env {
   if (!url || !mcpUrl || !workspaceRoot) {
     throw new AgentUnavailableError("The assistant isn't configured on this server.");
   }
+  const models = agentModels();
   return {
     url: url.replace(/\/$/, ""),
     password: process.env.OPENCODE_SERVER_PASSWORD,
     mcpUrl,
     workspaceRoot,
     opencodeWorkspaceRoot: process.env.OPENCODE_WORKSPACE_ROOT || workspaceRoot,
-    model: process.env.AGENT_MODEL || "openai/gpt-4.1-mini",
+    model: models.default,
     litellmBaseUrl: process.env.LITELLM_BASE_URL || undefined,
+    litellmModels: models.litellmIds,
   };
 }
 
@@ -199,8 +205,8 @@ export function lockdownProblems(
 }
 
 type ModelRef = { providerID: string; modelID: string };
-const modelRef = (e: Env): ModelRef => {
-  const [providerID, ...rest] = e.model.split("/");
+const modelRef = (model: string): ModelRef => {
+  const [providerID, ...rest] = model.split("/");
   return { providerID, modelID: rest.join("/") };
 };
 
@@ -325,12 +331,14 @@ export async function getAgentMessages(userId: string, sessionId: string): Promi
 /** Start the agent's turn on the user's message and return at once; the turn
  *  runs on in opencode (see isSessionBusy).
  *  `receipt` mode (a photo is attached) adds the receipt instructions and
- *  limits the turn to scan_receipt + create_transaction. */
+ *  limits the turn to scan_receipt + create_transaction, and always runs on the
+ *  default model. `model` (already validated) picks the model for a chat turn. */
 export async function sendAgentPrompt(
   userId: string,
   sessionId: string,
   text: string,
   mode: PromptMode = "chat",
+  model?: string,
 ): Promise<void> {
   const e = env();
   const directory = await ensureUserInstance(userId, e);
@@ -340,7 +348,7 @@ export async function sendAgentPrompt(
   // runs on in opencode — so it doesn't depend on the browser staying around.
   await api(e, "POST", `/session/${encodeURIComponent(sessionId)}/prompt_async`, directory, {
     agent: AGENT_NAME,
-    model: modelRef(e),
+    model: modelRef(mode === "receipt" || !model ? e.model : model),
     tools: mode === "receipt" ? RECEIPT_PROMPT_TOOLS : PROMPT_TOOLS,
     system: mode === "receipt" ? `Today is ${today}.\n\n${RECEIPT_SYSTEM_PROMPT}` : `Today is ${today}.`,
     parts: [{ type: "text", text }],
@@ -427,7 +435,7 @@ export async function noteProposalDecision(
   const directory = await ensureUserInstance(userId, e);
   await api(e, "POST", `/session/${encodeURIComponent(sessionId)}/message`, directory, {
     agent: AGENT_NAME,
-    model: modelRef(e),
+    model: modelRef(e.model),
     tools: PROMPT_TOOLS,
     noReply: true,
     parts: [{ type: "text", text: NOTE_PREFIX + note }],

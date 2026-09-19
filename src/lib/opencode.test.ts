@@ -117,13 +117,35 @@ describe("sendAgentPrompt", () => {
       "GET /mcp": { finmon: {} },
       "POST /session/ses_1/prompt_async": 204,
     });
-    await sendAgentPrompt("user-1", "ses_1", "hi", "receipt");
+    vi.stubEnv("AGENT_MODEL", "opencode/big-pickle");
+    await sendAgentPrompt("user-1", "ses_1", "hi", "receipt", "openai/gpt-4.1-mini");
     const prompt = calls.find((c) => c.path.endsWith("/prompt_async"));
     expect(prompt?.body).toMatchObject({
       agent: "finmon",
+      // Receipt turns always run on the default model.
+      model: { providerID: "opencode", modelID: "big-pickle" },
       parts: [{ type: "text", text: "hi" }],
       tools: { "*": false, finmon_scan_receipt: true, finmon_create_transaction: true },
     });
     expect(calls.some((c) => c.path === "/session/ses_1/message")).toBe(false);
+  });
+
+  it("runs a chat turn on the model it's given, splitting provider and model ids", async () => {
+    serve({
+      "GET /agent": [
+        {
+          name: "finmon",
+          permission: [
+            { permission: "*", pattern: "*", action: "deny" },
+            { permission: "finmon_*", pattern: "*", action: "allow" },
+          ],
+        },
+      ],
+      "GET /mcp": { finmon: {} },
+      "POST /session/ses_1/prompt_async": 204,
+    });
+    await sendAgentPrompt("user-1", "ses_1", "hi", "chat", "litellm/qwen/qwen3-32b");
+    const prompt = calls.find((c) => c.path.endsWith("/prompt_async"));
+    expect(prompt?.body).toMatchObject({ model: { providerID: "litellm", modelID: "qwen/qwen3-32b" } });
   });
 });

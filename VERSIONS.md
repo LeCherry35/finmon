@@ -8,6 +8,20 @@ Entry shape: `## <version> — <YYYY-MM-DD> — <headline>`, then **Added / Chan
 
 ---
 
+## 0.15.0 — 2026-09-19 — Pick the assistant's model per chat
+
+**Added**
+- Model picker in the assistant composer, shown when more than one model is configured. A new chat starts on the default model (`AGENT_MODEL`). The picked model runs your next message and stays as that chat's model until you change it. Each chat remembers its own model.
+- Receipt-photo turns always run on the default model. The picker is locked while a photo is staged, and a photo turn doesn't change the chat's model.
+- The server checks every picked model against the configured list and refuses anything else ("Unknown model"). A chat whose model was removed from the list falls back to the default.
+
+**Migrations**
+- `020_agent_chat_model.sql`: `agent_chats.model` (nullable `TEXT`; NULL = default).
+
+**Deploy notes**
+- Optional new `.env` vars: `AGENT_OPENCODE_MODELS` (comma-separated `provider/model` ids for opencode's built-in providers, keys as for `AGENT_MODEL`) and `AGENT_LITELLM_MODELS` (comma-separated LiteLLM model names, `litellm/` prefix optional, needs `LITELLM_BASE_URL`). Every listed model must support tool calling, and your data goes to the provider of whichever model a chat uses.
+- Without them nothing changes: one model, no picker. Deploy with `git pull` + `docker compose up -d --build` (the migration runs on start). Users' opencode configs are rewritten on their next message.
+
 ## 0.14.0 — 2026-09-19 — Suggestions page for the assistant's proposals
 
 **Added**

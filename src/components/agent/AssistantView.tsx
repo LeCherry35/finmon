@@ -20,6 +20,7 @@ import ProposalCard from "@/components/agent/ProposalCard";
 import { SUGGESTIONS_HREF, useSuggestionCount } from "@/components/agent/SuggestionCount";
 import { CameraIcon, SendIcon, SparkIcon, StopIcon, WarnIcon, XIcon } from "@/components/agent/icons";
 import { fileToDataUrl } from "@/components/ReceiptUpload";
+import type { AgentModelOption } from "@/lib/agent-models";
 
 const SUGGESTIONS = [
   "How much did I spend this month?",
@@ -43,8 +44,21 @@ const POLL_MS = 2000;
  * `history.replaceState` dispatch router transitions that can entangle with
  * ours and pin `isPending` (which left Send/Accept disabled). For the same
  * reason the open chat isn't mirrored to the URL.
+ *
+ * The model picker (shown when more than one model is configured) starts on
+ * the open chat's model — the default for a new chat — and the next send runs
+ * on the pick, which then becomes the chat's model. Receipt turns always run
+ * on the default, so it's locked while a photo is staged.
  */
-export default function AssistantView({ initialChats }: { initialChats: AgentChatSummary[] }) {
+export default function AssistantView({
+  initialChats,
+  models = [],
+  defaultModel = "",
+}: {
+  initialChats: AgentChatSummary[];
+  models?: AgentModelOption[];
+  defaultModel?: string;
+}) {
   const [chats, setChats] = useState(initialChats);
   const [chat, setChat] = useState<AgentChatState | null>(null);
   const [draft, setDraft] = useState("");
@@ -54,6 +68,8 @@ export default function AssistantView({ initialChats }: { initialChats: AgentCha
   /** A staged receipt photo (downscaled data URL) for the next message. */
   const [photo, setPhoto] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** A model picked for a chat (null chatId: the new chat) — applies only while that chat is open. */
+  const [modelPick, setModelPick] = useState<{ chatId: number | null; model: string } | null>(null);
   const inFlight = useRef(false);
   /** Bumped whenever the open chat is set by the user's own actions, so a
    *  poll that started before can't overwrite the newer state. */
@@ -64,6 +80,9 @@ export default function AssistantView({ initialChats }: { initialChats: AgentCha
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  const openChatId = chat?.chatId ?? null;
+  const selectedModel =
+    modelPick && modelPick.chatId === openChatId ? modelPick.model : (chat?.model ?? defaultModel);
   const running = !!chat?.running;
   const runningChatId = running ? chat!.chatId : null;
   const { count: pendingSuggestions, refresh: refreshSuggestions } = useSuggestionCount();
@@ -181,7 +200,7 @@ export default function AssistantView({ initialChats }: { initialChats: AgentCha
       async () => {
         let result: AgentResult<AgentChatState>;
         try {
-          result = await sendAgentMessage(chatId, text, image);
+          result = await sendAgentMessage(chatId, text, image, image || models.length < 2 ? null : selectedModel);
         } catch (err) {
           // The request itself died (dropped connection). The turn may have
           // started anyway, so pick up whatever landed.
@@ -482,9 +501,26 @@ export default function AssistantView({ initialChats }: { initialChats: AgentCha
               </button>
             )}
           </div>
-          <p className="mt-1.5 hidden text-[11px] text-zinc-400 md:block">
-            Enter to send · Shift+Enter for a new line
-          </p>
+          <div className="mt-1.5 flex items-center gap-2 text-[11px] text-zinc-400">
+            {models.length > 1 && (
+              <select
+                value={photo ? defaultModel : selectedModel}
+                onChange={(e) => setModelPick({ chatId: openChatId, model: e.target.value })}
+                disabled={busy || running || !!photo}
+                aria-label="Model"
+                title={photo ? "Receipts always use the default model" : "Model for your next message"}
+                className="max-w-[60%] truncate rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[11px] text-zinc-600 hover:border-zinc-400 disabled:opacity-60"
+              >
+                {models.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
+                    {m.id === defaultModel ? " · default" : ""}
+                  </option>
+                ))}
+              </select>
+            )}
+            <span className="hidden md:inline">Enter to send · Shift+Enter for a new line</span>
+          </div>
         </form>
       </div>
     </div>

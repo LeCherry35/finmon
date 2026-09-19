@@ -18,11 +18,14 @@ import AssistantView from "@/components/agent/AssistantView";
 
 const proposal = { id: 12, status: "pending", summary: "Delete transaction 3", error: null };
 
-function chatState(opts: { chatId?: number; withProposal?: boolean; status?: string; running?: boolean } = {}) {
-  const { chatId = 7, withProposal = false, status = "pending", running = false } = opts;
+function chatState(
+  opts: { chatId?: number; withProposal?: boolean; status?: string; running?: boolean; model?: string } = {},
+) {
+  const { chatId = 7, withProposal = false, status = "pending", running = false, model = "opencode/big-pickle" } = opts;
   return {
     chatId,
     running,
+    model,
     messages: [
       { id: "u1", role: "user", text: "hello", tools: [], error: null, createdAt: 1 },
       {
@@ -67,12 +70,12 @@ describe("AssistantView", () => {
 
     await user.type(input(), "hello{Enter}");
     await screen.findByText("Here you go");
-    expect(actions.sendAgentMessage).toHaveBeenCalledWith(null, "hello", null);
+    expect(actions.sendAgentMessage).toHaveBeenCalledWith(null, "hello", null, null);
 
     await user.type(input(), "again");
     await waitFor(() => expect(sendBtn()).toBeEnabled());
     await user.click(sendBtn());
-    await waitFor(() => expect(actions.sendAgentMessage).toHaveBeenLastCalledWith(7, "again", null));
+    await waitFor(() => expect(actions.sendAgentMessage).toHaveBeenLastCalledWith(7, "again", null, null));
     expect(replaceState).not.toHaveBeenCalled();
   });
 
@@ -161,7 +164,7 @@ describe("AssistantView", () => {
     await user.type(input(), "my draft");
     await user.click(screen.getByRole("button", { name: "Am I over plan anywhere?" }));
     await screen.findByText("nope");
-    expect(actions.sendAgentMessage).toHaveBeenCalledWith(null, "Am I over plan anywhere?", null);
+    expect(actions.sendAgentMessage).toHaveBeenCalledWith(null, "Am I over plan anywhere?", null, null);
     expect(input()).toHaveValue("my draft");
   });
 
@@ -197,6 +200,7 @@ describe("AssistantView", () => {
       null,
       "",
       expect.stringMatching(/^data:image\/jpeg;base64,/),
+      null,
     );
     // The composer is cleared; the pending bubble carries the photo chip.
     expect(screen.queryByRole("img", { name: "Receipt photo" })).not.toBeInTheDocument();
@@ -335,5 +339,57 @@ describe("AssistantView", () => {
     await user.click(await screen.findByRole("button", { name: "Remove photo" }));
     expect(screen.queryByRole("img", { name: "Receipt photo" })).not.toBeInTheDocument();
     expect(sendBtn()).toBeDisabled();
+  });
+
+  describe("model picker", () => {
+    const models = [
+      { id: "opencode/big-pickle", label: "opencode/big-pickle" },
+      { id: "litellm/qwen3", label: "qwen3 (LiteLLM)" },
+    ];
+    const picker = () => screen.getByRole("combobox", { name: "Model" });
+
+    it("is hidden when only one model is configured", () => {
+      render(<AssistantView initialChats={[]} models={models.slice(0, 1)} defaultModel="opencode/big-pickle" />);
+      expect(screen.queryByRole("combobox", { name: "Model" })).not.toBeInTheDocument();
+    });
+
+    it("starts a new chat on the default and sends the picked model", async () => {
+      const user = userEvent.setup();
+      actions.sendAgentMessage.mockResolvedValue({ ok: true, data: chatState({ model: "litellm/qwen3" }) });
+      render(<AssistantView initialChats={[]} models={models} defaultModel="opencode/big-pickle" />);
+
+      expect(picker()).toHaveValue("opencode/big-pickle");
+      await user.selectOptions(picker(), "litellm/qwen3");
+      await user.type(input(), "hello{Enter}");
+      await screen.findByText("Here you go");
+      expect(actions.sendAgentMessage).toHaveBeenCalledWith(null, "hello", null, "litellm/qwen3");
+      // The chat now runs on it.
+      expect(picker()).toHaveValue("litellm/qwen3");
+    });
+
+    it("shows an opened chat's own model", async () => {
+      const user = userEvent.setup();
+      actions.loadAgentChat.mockResolvedValue({ ok: true, data: chatState({ chatId: 3, model: "litellm/qwen3" }) });
+      render(
+        <AssistantView
+          initialChats={[{ id: 3, title: "old", created_at: "2026-09-01T10:00:00Z" }]}
+          models={models}
+          defaultModel="opencode/big-pickle"
+        />,
+      );
+      await user.click(screen.getByRole("button", { name: /chats|new chat/i }));
+      await user.click(await screen.findByText("old"));
+      await waitFor(() => expect(picker()).toHaveValue("litellm/qwen3"));
+    });
+
+    it("locks to the default while a receipt photo is staged", async () => {
+      const user = userEvent.setup();
+      render(<AssistantView initialChats={[]} models={models} defaultModel="opencode/big-pickle" />);
+      await user.selectOptions(picker(), "litellm/qwen3");
+      await user.upload(screen.getByLabelText("Receipt photo"), new File(["img"], "r.jpg", { type: "image/jpeg" }));
+      await screen.findByRole("img", { name: "Receipt photo" });
+      expect(picker()).toBeDisabled();
+      expect(picker()).toHaveValue("opencode/big-pickle");
+    });
   });
 });

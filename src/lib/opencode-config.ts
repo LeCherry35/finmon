@@ -24,34 +24,40 @@ export const RECEIPT_SYSTEM_PROMPT = `The user attached a receipt photo to this 
 - If the scan keeps failing, tell the user and don't create anything.
 - Afterwards briefly summarize what you read (store, date, total, number of items) and that the transaction is waiting for their approval.`;
 
-/** Provider key for a LiteLLM (OpenAI-compatible) server: AGENT_MODEL=litellm/<model>. */
+/** Provider key for a LiteLLM (OpenAI-compatible) server: models are `litellm/<model>`. */
 export const LITELLM_PROVIDER = "litellm";
 
 /**
- * Custom opencode provider for `litellm/<model>` models. The API key stays an
- * `{env:…}` placeholder, resolved from the opencode process's environment, so
- * the real key is never written into the per-user config files.
+ * Custom opencode provider registering every selectable `litellm/<model>`
+ * model. The API key stays an `{env:…}` placeholder, resolved from the
+ * opencode process's environment, so the real key is never written into the
+ * per-user config files.
  */
-function litellmProvider(model: string, baseURL: string | undefined) {
-  const prefix = `${LITELLM_PROVIDER}/`;
-  if (!baseURL || !model.startsWith(prefix)) return undefined;
-  const modelId = model.slice(prefix.length);
+function litellmProvider(modelIds: string[], baseURL: string | undefined) {
+  if (!baseURL || modelIds.length === 0) return undefined;
   return {
     [LITELLM_PROVIDER]: {
       npm: "@ai-sdk/openai-compatible",
       name: "LiteLLM",
       options: { baseURL, apiKey: "{env:LITELLM_API_KEY}" },
-      models: { [modelId]: { name: modelId } },
+      models: Object.fromEntries(modelIds.map((id) => [id, { name: id }])),
     },
   };
 }
 
 export function buildOpencodeConfig(
   token: string,
-  e: { mcpUrl: string; model: string; litellmBaseUrl?: string },
+  e: { mcpUrl: string; model: string; litellmBaseUrl?: string; litellmModels?: string[] },
 ) {
   const denyAll = { "*": "deny", [`${MCP_KEY}_*`]: "allow" };
-  const provider = litellmProvider(e.model, e.litellmBaseUrl);
+  const prefix = `${LITELLM_PROVIDER}/`;
+  const litellmIds = [
+    ...new Set([
+      ...(e.model.startsWith(prefix) ? [e.model.slice(prefix.length)] : []),
+      ...(e.litellmModels ?? []),
+    ]),
+  ];
+  const provider = litellmProvider(litellmIds, e.litellmBaseUrl);
   return {
     $schema: "https://opencode.ai/config.json",
     model: e.model,

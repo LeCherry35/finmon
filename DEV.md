@@ -34,6 +34,8 @@ AGENT_MODEL=opencode/big-pickle
 
 To use a model behind a LiteLLM server instead, set `AGENT_MODEL=litellm/<model>` and `LITELLM_BASE_URL=https://<host>/v1` in `.env`, and put `LITELLM_API_KEY` in the **opencode** process's env (not the app's).
 
+To try the per-chat model picker, list extra models: `AGENT_OPENCODE_MODELS=provider/model,…` (built-in opencode providers) and/or `AGENT_LITELLM_MODELS=<name>,…` (LiteLLM names, `litellm/` prefix optional, needs `LITELLM_BASE_URL`). The picker shows only when more than one model is configured.
+
 "The assistant returned an error" with a 401 in the dev log means the two passwords differ.
 
 ## Test account
