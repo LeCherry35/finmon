@@ -54,7 +54,7 @@ async function handle(userId: string, msg: JsonRpcRequest) {
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: "finmon", version: process.env.npm_package_version ?? "0" },
           instructions:
-            "Tools over the signed-in user's finmon records. Read tools answer immediately. Write tools only create proposals the user must accept in the chat.",
+            "Tools over the signed-in user's finmon records. Read tools answer immediately. Write tools only create proposals the user must accept in the app.",
         },
       };
     }

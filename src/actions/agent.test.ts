@@ -18,6 +18,7 @@ const { query, decideProposal, getProposals, oc } = vi.hoisted(() => ({
 }));
 
 vi.mock("@/db", () => ({ pool: { query } }));
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/dal", () => ({ requireUser: vi.fn(async () => ({ id: "user-1" })) }));
 vi.mock("@/lib/agent-proposals", () => ({ decideProposal, getProposals }));
 vi.mock("@/lib/opencode", () => ({
@@ -202,6 +203,12 @@ describe("loadAgentChat", () => {
 });
 
 describe("accept/reject", () => {
+  /** The chat lookup finds chatRow; the proposal's chat lookup finds its session. */
+  const db = () =>
+    query.mockImplementation(async (sql: string) =>
+      /FROM agent_proposals p/.test(sql) ? { rows: [{ session: "ses_1" }] } : { rows: [chatRow] },
+    );
+
   it("refuses when the chat isn't the user's, without deciding", async () => {
     query.mockResolvedValueOnce({ rows: [] });
     expect(await acceptProposal(5, 12)).toEqual({ ok: false, error: "Chat not found" });
@@ -209,7 +216,7 @@ describe("accept/reject", () => {
   });
 
   it("decides as the signed-in user and tells the agent the outcome", async () => {
-    query.mockResolvedValue({ rows: [chatRow] });
+    db();
     decideProposal.mockResolvedValue({ ok: true, proposal: { id: 12, tool: "delete_transaction", status: "rejected" } });
     oc.noteProposalDecision.mockResolvedValue(undefined);
 
@@ -221,7 +228,7 @@ describe("accept/reject", () => {
   });
 
   it("refuses while the chat's turn is still running", async () => {
-    query.mockResolvedValue({ rows: [chatRow] });
+    db();
     oc.isSessionBusy.mockResolvedValue(true);
     expect(await acceptProposal(5, 12)).toEqual({
       ok: false,
@@ -231,7 +238,7 @@ describe("accept/reject", () => {
   });
 
   it("passes through a decision error", async () => {
-    query.mockResolvedValue({ rows: [chatRow] });
+    db();
     decideProposal.mockResolvedValue({ ok: false, error: "Already accepted" });
     expect(await acceptProposal(5, 12)).toEqual({ ok: false, error: "Already accepted" });
     expect(oc.noteProposalDecision).not.toHaveBeenCalled();

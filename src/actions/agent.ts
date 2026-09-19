@@ -1,10 +1,12 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { pool } from "@/db";
 import { requireUser } from "@/lib/dal";
-import { decideProposal } from "@/lib/agent-proposals";
 import {
+  STILL_RUNNING,
   chatState,
+  decideWithNote,
   guard,
   proposalIds,
   rejectPendingProposals,
@@ -20,7 +22,6 @@ import {
   deleteLastTurn,
   getAgentMessages,
   isSessionBusy,
-  noteProposalDecision,
   sendAgentPrompt,
   waitUntilIdle,
 } from "@/lib/opencode";
@@ -39,7 +40,6 @@ const MAX_MESSAGE_LENGTH = 2000;
  *  photos to a few hundred KB, so this only stops abuse. */
 const MAX_IMAGE_DATA_URL_LENGTH = 3_500_000;
 const RECEIPT_CHAT_TITLE = "Receipt scan";
-const STILL_RUNNING = "The assistant is still answering. Wait, or stop it first.";
 
 type ChatRow = { id: number; opencode_session_id: string };
 const RATE_WINDOW_MS = 60_000;
@@ -218,31 +218,11 @@ async function decide(
   const chat = await ownedChat(userId, chatId);
   if (!chat) return { ok: false, error: "Chat not found" };
   if (!Number.isInteger(proposalId) || proposalId <= 0) return { ok: false, error: "Invalid proposal" };
-  // Posting the decision note into a session mid-turn isn't safe; the UI
-  // disables Accept/Reject until the turn ends.
-  if (await isSessionBusy(userId, chat.opencode_session_id).catch(() => false)) {
-    return { ok: false, error: STILL_RUNNING };
-  }
 
-  const result = await decideProposal(userId, proposalId, decision);
+  const result = await decideWithNote(userId, proposalId, decision);
   if (!result.ok) return result;
-
-  const p = result.proposal;
-  const note =
-    p.status === "accepted"
-      ? `The user ACCEPTED proposal ${p.id} (${p.tool}); it has been applied.`
-      : p.status === "rejected"
-        ? `The user REJECTED proposal ${p.id} (${p.tool}); nothing was changed.`
-        : `The user accepted proposal ${p.id} (${p.tool}) but applying it FAILED: ${p.error}. Nothing was changed.`;
-
-  return guard(async () => {
-    // The decision is already recorded; failing to inform the agent shouldn't
-    // surface as an error for the user.
-    await noteProposalDecision(userId, chat.opencode_session_id, note).catch((err) =>
-      console.error("Could not note proposal decision:", err),
-    );
-    return chatState(userId, chat.id, chat.opencode_session_id);
-  });
+  revalidatePath("/suggestions");
+  return guard(() => chatState(userId, chat.id, chat.opencode_session_id));
 }
 
 export async function acceptProposal(chatId: number, proposalId: number) {

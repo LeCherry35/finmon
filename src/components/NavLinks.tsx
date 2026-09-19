@@ -4,12 +4,15 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import FilterMemoryRecorder from "@/components/FilterMemoryRecorder";
+import { useSuggestionCount } from "@/components/agent/SuggestionCount";
 import { useFilterQuery } from "@/lib/filter-memory";
 import { ASSISTANT_LINK, FILTER_PAGES, NAV_LINKS } from "@/lib/nav";
 
 export default function NavLinks({ showAssistant = false }: { showAssistant?: boolean }) {
   const pathname = usePathname();
   const filterQuery = useFilterQuery();
+  // Pending assistant suggestions, shown on the Assistant link: "Assistant (3)".
+  const { count: pendingSuggestions } = useSuggestionCount();
 
   return (
     <span className="hidden md:contents">
@@ -30,6 +33,7 @@ export default function NavLinks({ showAssistant = false }: { showAssistant?: bo
       {showAssistant && (
         <Link href={ASSISTANT_LINK.href} className={linkClass(pathname === ASSISTANT_LINK.href)}>
           {ASSISTANT_LINK.label}
+          {pendingSuggestions > 0 && ` (${pendingSuggestions})`}
         </Link>
       )}
     </span>

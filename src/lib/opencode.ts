@@ -347,14 +347,22 @@ export async function sendAgentPrompt(
   });
 }
 
-/** Whether the session has a turn running (opencode's own status, so it's
- *  right across page changes and app restarts). Idle sessions aren't listed. */
-export async function isSessionBusy(userId: string, sessionId: string): Promise<boolean> {
+/** The user's sessions that have a turn running (opencode's own status, so
+ *  it's right across page changes and app restarts). Idle sessions aren't listed. */
+export async function busySessionIds(userId: string): Promise<Set<string>> {
   const e = env();
   const directory = await ensureUserInstance(userId, e);
   const status = await api<Record<string, { type: string } | undefined>>(e, "GET", "/session/status", directory);
-  const type = status?.[sessionId]?.type;
-  return type === "busy" || type === "retry";
+  return new Set(
+    Object.entries(status ?? {})
+      .filter(([, s]) => s?.type === "busy" || s?.type === "retry")
+      .map(([id]) => id),
+  );
+}
+
+/** Whether the session has a turn running. */
+export async function isSessionBusy(userId: string, sessionId: string): Promise<boolean> {
+  return (await busySessionIds(userId)).has(sessionId);
 }
 
 const IDLE_POLL_MS = 500;

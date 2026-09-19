@@ -11,7 +11,10 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(nav.search),
 }));
 
+vi.mock("@/actions/suggestions", () => ({ countPendingSuggestions: vi.fn() }));
+
 import NavLinks from "@/components/NavLinks";
+import { SuggestionCountProvider } from "@/components/agent/SuggestionCount";
 import MobileBottomNav from "@/components/MobileBottomNav";
 
 afterEach(() => sessionStorage.clear());
@@ -58,5 +61,16 @@ describe("assistant link", () => {
     const link = screen.getByRole("link", { name: "Assistant" });
     expect(link.getAttribute("href")).toBe("/assistant");
     expect(link.className).toMatch(/font-medium/);
+  });
+
+  it("shows the pending suggestions count in parentheses", () => {
+    nav.pathname = "/plan";
+    nav.search = "";
+    render(
+      <SuggestionCountProvider enabled={false} initial={3}>
+        <NavLinks showAssistant />
+      </SuggestionCountProvider>,
+    );
+    expect(screen.getByRole("link", { name: "Assistant (3)" }).getAttribute("href")).toBe("/assistant");
   });
 });

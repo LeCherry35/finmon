@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ChatIcon } from "@/components/agent/icons";
+import { SuggestionsButton } from "@/components/agent/SuggestionCount";
 
 /** Round gray link to /assistant (mobile only). Unpositioned — callers place it. */
 export function AssistantButton() {
@@ -19,16 +20,18 @@ export function AssistantButton() {
 }
 
 /**
- * Mobile entry to /assistant, in the bottom-right FAB slot. On /transactions
- * the "+" owns that slot, so TransactionCreateSheet stacks AssistantButton in
- * the same container instead (two separately fixed buttons can overlap on iOS).
- * Desktop uses the header nav link.
+ * Mobile entry to /assistant, in the bottom-right FAB slot, with the pending
+ * suggestions button above it while any are pending. On /transactions the "+"
+ * owns that slot, so TransactionCreateSheet stacks both buttons in the same
+ * container instead (two separately fixed buttons can overlap on iOS). Hidden
+ * on /assistant, where it would cover the composer. Desktop uses the header.
  */
 export default function AssistantFab() {
   const pathname = usePathname();
   if (pathname === "/assistant" || pathname === "/transactions") return null;
   return (
-    <div className="fixed right-4 bottom-[calc(env(safe-area-inset-bottom,0px)+5rem)] z-30 md:hidden">
+    <div className="fixed right-4 bottom-[calc(env(safe-area-inset-bottom,0px)+5rem)] z-30 flex flex-col gap-3 md:hidden">
+      <SuggestionsButton />
       <AssistantButton />
     </div>
   );

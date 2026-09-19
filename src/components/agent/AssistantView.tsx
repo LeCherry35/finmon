@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import {
   acceptProposal,
   deleteAgentChat,
@@ -16,6 +17,7 @@ import {
 import AssistantMarkdown from "@/components/agent/AssistantMarkdown";
 import ChatsPanel from "@/components/agent/ChatsPanel";
 import ProposalCard from "@/components/agent/ProposalCard";
+import { SUGGESTIONS_HREF, useSuggestionCount } from "@/components/agent/SuggestionCount";
 import { CameraIcon, SendIcon, SparkIcon, StopIcon, WarnIcon, XIcon } from "@/components/agent/icons";
 import { fileToDataUrl } from "@/components/ReceiptUpload";
 
@@ -64,6 +66,11 @@ export default function AssistantView({ initialChats }: { initialChats: AgentCha
 
   const running = !!chat?.running;
   const runningChatId = running ? chat!.chatId : null;
+  const { count: pendingSuggestions, refresh: refreshSuggestions } = useSuggestionCount();
+  // New proposals (from polling) and decisions made here change the pending count.
+  const proposalsKey = Object.values(chat?.proposals ?? {})
+    .map((p) => `${p.id}:${p.status}`)
+    .join(",");
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -76,6 +83,10 @@ export default function AssistantView({ initialChats }: { initialChats: AgentCha
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }, [draft]);
+
+  useEffect(() => {
+    if (proposalsKey) refreshSuggestions();
+  }, [proposalsKey, refreshSuggestions]);
 
   // Follow a running turn until it ends. Leaving the page (or the chat) just
   // stops the polling; the turn itself runs on in opencode.
@@ -289,6 +300,17 @@ export default function AssistantView({ initialChats }: { initialChats: AgentCha
           onSelect={selectChat}
           onDelete={removeChat}
         />
+        <Link
+          href={SUGGESTIONS_HREF}
+          className="rounded-full bg-zinc-100 px-3 py-1.5 text-xs text-zinc-600 hover:bg-zinc-200 hover:text-zinc-900"
+        >
+          Suggestions
+          {pendingSuggestions > 0 && (
+            <span className="ml-1.5 rounded-full bg-amber-500 px-1.5 py-0.5 text-[11px] font-semibold text-white">
+              {pendingSuggestions}
+            </span>
+          )}
+        </Link>
       </div>
 
       <div className="flex flex-col overflow-hidden rounded-lg border border-zinc-200 h-[calc(100dvh-env(safe-area-inset-bottom,0px)-17.5rem)] md:h-[calc(100dvh-12.5rem)] min-h-80">

@@ -5,6 +5,7 @@ import {
   getAgentTool,
   parseToolInput,
 } from "@/lib/agent-tools";
+import { busySessionIds } from "@/lib/opencode";
 
 /** More pending proposals than this and new write calls are refused, so a
  *  runaway agent can't bury the user in approval cards. */
@@ -14,6 +15,8 @@ export type ProposalStatus = "pending" | "accepted" | "rejected" | "failed";
 
 export type AgentProposal = {
   id: number;
+  /** The chat it was proposed in, when known (see migration 019). */
+  chat_id: number | null;
   tool: string;
   args: Record<string, unknown>;
   summary: string;
@@ -45,11 +48,7 @@ export async function callAgentTool(
       return { ok: true, data: await tool.run(userId, input as never) };
     }
 
-    const { rows: pending } = await pool.query<{ count: number }>(
-      "SELECT COUNT(*)::int AS count FROM agent_proposals WHERE user_id = $1 AND status = 'pending'",
-      [userId],
-    );
-    if ((pending[0]?.count ?? 0) >= MAX_PENDING_PROPOSALS) {
+    if ((await countPendingProposals(userId)) >= MAX_PENDING_PROPOSALS) {
       return {
         ok: false,
         error: `There are already ${MAX_PENDING_PROPOSALS} changes waiting for the user's approval. Ask them to accept or reject those first.`,
@@ -57,10 +56,11 @@ export async function callAgentTool(
     }
 
     const summary = tool.describe ? await tool.describe(userId, input as never) : tool.name;
+    const chatId = await runningChatId(userId);
     const { rows } = await pool.query<{ id: number }>(
-      `INSERT INTO agent_proposals (user_id, tool, args, summary)
-       VALUES ($1, $2, $3, $4) RETURNING id`,
-      [userId, tool.name, JSON.stringify(input), summary],
+      `INSERT INTO agent_proposals (user_id, tool, args, summary, chat_id)
+       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+      [userId, tool.name, JSON.stringify(input), summary, chatId],
     );
     return {
       ok: true,
@@ -79,11 +79,62 @@ export async function callAgentTool(
   }
 }
 
+/** The chat whose turn is making this tool call: the user's only chat with a
+ *  running turn. Null when that's ambiguous or unknown — chatState links the
+ *  proposal later, when its chat is opened. */
+async function runningChatId(userId: string): Promise<number | null> {
+  try {
+    const busy = await busySessionIds(userId);
+    if (busy.size === 0) return null;
+    const { rows } = await pool.query<{ id: number; opencode_session_id: string }>(
+      "SELECT id, opencode_session_id FROM agent_chats WHERE user_id = $1 AND deleted_at IS NULL",
+      [userId],
+    );
+    const running = rows.filter((c) => busy.has(c.opencode_session_id));
+    return running.length === 1 ? running[0].id : null;
+  } catch (err) {
+    console.error("Could not find the proposing chat:", err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+export async function countPendingProposals(userId: string): Promise<number> {
+  const { rows } = await pool.query<{ count: number }>(
+    "SELECT COUNT(*)::int AS count FROM agent_proposals WHERE user_id = $1 AND status = 'pending'",
+    [userId],
+  );
+  return rows[0]?.count ?? 0;
+}
+
+/** A proposal as the Suggestions page lists it: with its chat's title. */
+export type SuggestionItem = AgentProposal & { chat_title: string | null };
+
+export const SUGGESTION_HISTORY_LIMIT = 50;
+
+/** Every pending proposal (newest first) and the latest decided ones. */
+export async function listProposals(
+  userId: string,
+): Promise<{ pending: SuggestionItem[]; history: SuggestionItem[] }> {
+  const select = `SELECT p.id, p.chat_id, p.tool, p.args, p.summary, p.status, p.error,
+                         p.created_at, p.decided_at, c.title AS chat_title
+                  FROM agent_proposals p
+                  LEFT JOIN agent_chats c ON c.id = p.chat_id AND c.deleted_at IS NULL
+                  WHERE p.user_id = $1`;
+  const [pending, history] = await Promise.all([
+    pool.query<SuggestionItem>(`${select} AND p.status = 'pending' ORDER BY p.id DESC`, [userId]),
+    pool.query<SuggestionItem>(
+      `${select} AND p.status <> 'pending' ORDER BY p.decided_at DESC NULLS LAST, p.id DESC LIMIT $2`,
+      [userId, SUGGESTION_HISTORY_LIMIT],
+    ),
+  ]);
+  return { pending: pending.rows, history: history.rows };
+}
+
 /** The user's proposals by id (only their own), for rendering approval cards. */
 export async function getProposals(userId: string, ids: number[]): Promise<AgentProposal[]> {
   if (ids.length === 0) return [];
   const { rows } = await pool.query<AgentProposal>(
-    `SELECT id, tool, args, summary, status, error, created_at, decided_at
+    `SELECT id, chat_id, tool, args, summary, status, error, created_at, decided_at
      FROM agent_proposals WHERE user_id = $1 AND id = ANY($2::int[])`,
     [userId, ids],
   );
@@ -104,7 +155,7 @@ export async function decideProposal(
   try {
     await client.query("BEGIN");
     const { rows } = await client.query<AgentProposal>(
-      `SELECT id, tool, args, summary, status, error, created_at, decided_at
+      `SELECT id, chat_id, tool, args, summary, status, error, created_at, decided_at
        FROM agent_proposals WHERE id = $1 AND user_id = $2 FOR UPDATE`,
       [proposalId, userId],
     );
@@ -138,7 +189,7 @@ export async function decideProposal(
     const { rows: updated } = await client.query<AgentProposal>(
       `UPDATE agent_proposals SET status = $1, error = $2, decided_at = now()
        WHERE id = $3 AND user_id = $4
-       RETURNING id, tool, args, summary, status, error, created_at, decided_at`,
+       RETURNING id, chat_id, tool, args, summary, status, error, created_at, decided_at`,
       [status, error, proposalId, userId],
     );
     await client.query("COMMIT");

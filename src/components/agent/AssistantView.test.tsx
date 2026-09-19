@@ -32,7 +32,7 @@ function chatState(opts: { chatId?: number; withProposal?: boolean; status?: str
         error: null,
         createdAt: 2,
         tools: withProposal
-          ? [{ name: "delete_transaction", status: "completed", proposalId: 12, error: null }]
+          ? [{ name: "delete_transaction", status: "completed", proposalId: 12 as number | null, error: null }]
           : [],
       },
     ],

@@ -8,6 +8,16 @@ Entry shape: `## <version> — <YYYY-MM-DD> — <headline>`, then **Added / Chan
 
 ---
 
+## 0.14.0 — 2026-09-19 — Suggestions page for the assistant's proposals
+
+**Added**
+- `/suggestions`: every proposal the assistant made that's waiting for you (Accept/Reject), plus the latest 50 decided ones as history, with date and chat title. Deciding here works like in the chat: refused while that chat's turn is running, and the agent gets the outcome noted in its chat.
+- The number of pending suggestions: on mobile a round amber button in the bottom-right stack (above the assistant button, and the "+" on /transactions), only while any are pending; on desktop in parentheses on the header's Assistant link, "Assistant (3)". The /assistant header always has a "Suggestions" link.
+- The chat's proposal cards are unchanged; deciding in either place updates the count.
+
+**Migrations**
+- `019_agent_proposal_chat.sql`: `agent_proposals.chat_id` (nullable, `ON DELETE SET NULL`). Set when the proposal is made (the user's one chat with a running turn) and filled in when a chat is loaded. Older proposals get it once their chat is opened; without it they're decided without a note.
+
 ## 0.13.0 — 2026-09-19 — Scan receipts in the assistant chat
 
 ### Added

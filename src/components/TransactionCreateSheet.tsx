@@ -4,6 +4,7 @@ import { useActionState, useEffect, useState } from "react";
 import { createTransaction } from "@/actions/transactions";
 import type { Category } from "@/actions/categories";
 import { AssistantButton } from "@/components/agent/AssistantFab";
+import { SuggestionsButton } from "@/components/agent/SuggestionCount";
 import ReceiptUpload, { ManualEntryDivider } from "@/components/ReceiptUpload";
 import {
   emptyTransactionGuard,
@@ -17,7 +18,7 @@ export default function TransactionCreateSheet({
 }: {
   categories: Category[];
   today: string;
-  /** Stack the assistant button above the "+" (see AssistantFab). */
+  /** Stack the assistant (and pending suggestions) buttons above the "+" (see AssistantFab). */
   showAssistant?: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -53,7 +54,12 @@ export default function TransactionCreateSheet({
   return (
     <>
       <div className="fixed right-4 bottom-[calc(env(safe-area-inset-bottom,0px)+5rem)] z-30 flex flex-col gap-3 md:hidden">
-        {showAssistant && <AssistantButton />}
+        {showAssistant && (
+          <>
+            <SuggestionsButton />
+            <AssistantButton />
+          </>
+        )}
         <button
           type="button"
           onClick={() => setOpen(true)}
