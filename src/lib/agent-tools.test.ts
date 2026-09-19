@@ -21,6 +21,13 @@ const m = vi.hoisted(() => ({
   createCategoryFor: vi.fn(),
   updateCategoryFor: vi.fn(),
   upsertPlanFor: vi.fn(),
+  insertProducts: vi.fn(),
+  recomputeTransactionStatus: vi.fn(),
+}));
+const { query, scanReceipt, upsertReceipt } = vi.hoisted(() => ({
+  query: vi.fn(),
+  scanReceipt: vi.fn(),
+  upsertReceipt: vi.fn(),
 }));
 
 vi.mock("@/db/queries", () => q);
@@ -28,6 +35,9 @@ vi.mock("@/lib/mutations/transactions", () => m);
 vi.mock("@/lib/mutations/products", () => m);
 vi.mock("@/lib/mutations/categories", () => m);
 vi.mock("@/lib/mutations/plans", () => m);
+vi.mock("@/db", () => ({ pool: { query } }));
+vi.mock("@/lib/receipt-scan", () => ({ scanReceipt }));
+vi.mock("@/lib/receipts", () => ({ upsertReceipt }));
 
 import { AGENT_TOOLS, AgentToolError, getAgentTool, parseToolInput } from "@/lib/agent-tools";
 
@@ -52,7 +62,7 @@ const tx = {
 };
 
 beforeEach(() => {
-  for (const fn of [...Object.values(q), ...Object.values(m)]) fn.mockReset();
+  for (const fn of [...Object.values(q), ...Object.values(m), query, scanReceipt, upsertReceipt]) fn.mockReset();
 });
 
 describe("registry", () => {
@@ -214,5 +224,98 @@ describe("write tools", () => {
       'Set 2026-10 plan for "Food": 200 → 250',
     );
     expect(q.getPlansForMonth).toHaveBeenCalledWith("user-1", "2026-10", [3]);
+  });
+});
+
+describe("receipt tools", () => {
+  const scan = {
+    store: "Shop",
+    total: 12.5,
+    date: "2026-09-17",
+    category: "Food",
+    products: [
+      { name: "Milk", brand: null, cost: 2.5, product_type: null, tags: [], description: null, price: null, amount: 1, unit: "l", discount: null },
+      { name: "Bread", brand: null, cost: 10, product_type: null, tags: [], description: null, price: null, amount: null, unit: null, discount: null },
+    ],
+  };
+  const attachment = (s: typeof scan | null = null) => ({
+    id: 4,
+    image: Buffer.from("AAAA", "base64"),
+    content_type: "image/jpeg",
+    scan: s,
+  });
+
+  it("scan_receipt reads the user's own attachment, stores and returns the scan", async () => {
+    query.mockResolvedValueOnce({ rows: [attachment()] }).mockResolvedValueOnce({ rowCount: 1 });
+    q.getCategories.mockResolvedValue([{ id: 3, name: "Food", priority: 5 }]);
+    scanReceipt.mockResolvedValue(scan);
+
+    const out = (await run("scan_receipt", "user-1", { receipt_id: 4 })) as Record<string, unknown>;
+
+    expect(query.mock.calls[0][1]).toEqual([4, "user-1"]);
+    expect(scanReceipt).toHaveBeenCalledWith("data:image/jpeg;base64,AAAA", ["Food"]);
+    expect(query.mock.calls[1][0]).toMatch(/UPDATE agent_attachments SET scan/);
+    expect(JSON.parse(query.mock.calls[1][1][0])).toEqual(scan);
+    expect(query.mock.calls[1][1].slice(1)).toEqual([4, "user-1"]);
+    expect(out).toMatchObject({ receipt_id: 4, total: 12.5, product_cost_sum: 12.5, suggested_category: "Food" });
+    expect(out.products).toEqual([
+      { name: "Milk", cost: 2.5, amount: 1, unit: "l" },
+      { name: "Bread", cost: 10, amount: null, unit: null },
+    ]);
+  });
+
+  it("scan_receipt refuses a missing or foreign attachment, and reports a failed scan", async () => {
+    query.mockResolvedValueOnce({ rows: [] });
+    await expect(run("scan_receipt", "user-1", { receipt_id: 4 })).rejects.toThrow("Receipt 4 not found");
+    expect(scanReceipt).not.toHaveBeenCalled();
+
+    query.mockResolvedValueOnce({ rows: [attachment()] });
+    q.getCategories.mockResolvedValue([]);
+    scanReceipt.mockRejectedValue(new Error("OpenAI down"));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(run("scan_receipt", "user-1", { receipt_id: 4 })).rejects.toThrow(AgentToolError);
+  });
+
+  it("create_transaction with receipt_id needs a scan and summarizes it", async () => {
+    const input = { type: "spend", date: "2026-09-17", receipt_id: 4 };
+    query.mockResolvedValueOnce({ rows: [attachment()] });
+    await expect(describeCall("create_transaction", "user-1", input)).rejects.toThrow(/call scan_receipt first/);
+
+    // A scanned receipt alone is enough — no amount or category needed.
+    query.mockResolvedValueOnce({ rows: [attachment(scan)] });
+    expect(await describeCall("create_transaction", "user-1", input)).toContain(
+      "receipt: 2 products, total 12.5",
+    );
+  });
+
+  it("create_transaction with receipt_id attaches the photo, total and scanned products", async () => {
+    query.mockResolvedValue({ rows: [attachment(scan)] });
+    q.getCategories.mockResolvedValue([{ id: 3, name: "Food", priority: 5 }]);
+    m.createTransactionFor.mockResolvedValue({ ok: true, id: 11 });
+
+    const input = { type: "spend", amount: 12.5, date: "2026-09-17", category_name: "Food", receipt_id: 4 };
+    expect(await run("create_transaction", "user-1", input)).toEqual({ transaction_id: 11 });
+
+    const fd = fields(m.createTransactionFor.mock.calls[0][1]);
+    expect(fd.has_receipt).toBe("1");
+    expect(fd).not.toHaveProperty("receipt_id");
+    expect(upsertReceipt).toHaveBeenCalledWith(
+      "user-1",
+      11,
+      { bytes: Buffer.from("AAAA", "base64"), contentType: "image/jpeg" },
+      12.5,
+    );
+    expect(m.insertProducts).toHaveBeenCalledWith("user-1", 11, scan.products);
+    expect(m.recomputeTransactionStatus).toHaveBeenCalledWith("user-1", 11);
+  });
+
+  it("create_transaction still recomputes status when attaching the receipt fails", async () => {
+    query.mockResolvedValue({ rows: [attachment(scan)] });
+    m.createTransactionFor.mockResolvedValue({ ok: true, id: 11 });
+    upsertReceipt.mockRejectedValue(new Error("disk full"));
+    await expect(
+      run("create_transaction", "user-1", { type: "spend", date: "2026-09-17", receipt_id: 4 }),
+    ).rejects.toThrow("disk full");
+    expect(m.recomputeTransactionStatus).toHaveBeenCalledWith("user-1", 11);
   });
 });

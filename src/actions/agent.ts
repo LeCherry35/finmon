@@ -2,32 +2,46 @@
 
 import { pool } from "@/db";
 import { requireUser } from "@/lib/dal";
+import { decideProposal } from "@/lib/agent-proposals";
 import {
-  decideProposal,
-  getProposals,
-  type AgentProposal,
-} from "@/lib/agent-proposals";
+  chatState,
+  guard,
+  proposalIds,
+  rejectPendingProposals,
+  type AgentChatState as ChatState,
+  type AgentResult as Result,
+} from "@/lib/agent-chats";
+import { parseImageDataUrl } from "@/lib/image-data-url";
 import {
   AgentUnavailableError,
+  abortAgentSession,
+  attachmentMarker,
   createAgentSession,
+  deleteLastTurn,
   getAgentMessages,
+  isSessionBusy,
   noteProposalDecision,
   sendAgentPrompt,
-  type AgentMessage,
+  waitUntilIdle,
 } from "@/lib/opencode";
 
+// Declared as aliases, not `export type { … }`: in a "use server" file the
+// bundler treats re-exported names as server actions (build error).
+export type AgentChatState = ChatState;
+export type AgentResult<T> = Result<T>;
 export type AgentChatSummary = { id: number; title: string | null; created_at: string };
-
-export type AgentChatState = {
-  chatId: number;
-  messages: AgentMessage[];
-  /** Proposals referenced by the messages' tool calls, keyed by id. */
-  proposals: Record<number, AgentProposal>;
-};
-
-export type AgentResult<T> = { ok: true; data: T } | { ok: false; error: string };
+/** What Stop undid: the chat as it is now (null: the chat was removed, it only
+ *  held the stopped message) and the stopped message, to put back in the composer. */
+export type StoppedTurn = { state: AgentChatState | null; text: string; attachmentId: number | null };
 
 const MAX_MESSAGE_LENGTH = 2000;
+/** Server actions accept 4 MB bodies (next.config.ts); the client downscales
+ *  photos to a few hundred KB, so this only stops abuse. */
+const MAX_IMAGE_DATA_URL_LENGTH = 3_500_000;
+const RECEIPT_CHAT_TITLE = "Receipt scan";
+const STILL_RUNNING = "The assistant is still answering. Wait, or stop it first.";
+
+type ChatRow = { id: number; opencode_session_id: string };
 const RATE_WINDOW_MS = 60_000;
 const RATE_MAX_PROMPTS = 10;
 
@@ -47,16 +61,6 @@ function rateLimited(userId: string): boolean {
   return false;
 }
 
-async function guard<T>(fn: () => Promise<T>): Promise<AgentResult<T>> {
-  try {
-    return { ok: true, data: await fn() };
-  } catch (err) {
-    if (err instanceof AgentUnavailableError) return { ok: false, error: err.message };
-    console.error("Agent action failed:", err instanceof Error ? err.stack ?? err.message : err);
-    return { ok: false, error: "Something went wrong with the assistant." };
-  }
-}
-
 async function ownedChat(userId: string, chatId: number) {
   if (!Number.isInteger(chatId) || chatId <= 0) return null;
   const { rows } = await pool.query<{ id: number; opencode_session_id: string }>(
@@ -66,20 +70,9 @@ async function ownedChat(userId: string, chatId: number) {
   return rows[0] ?? null;
 }
 
-function proposalIds(messages: AgentMessage[]): number[] {
-  return messages.flatMap((m) => m.tools.map((t) => t.proposalId)).filter((id): id is number => id !== null);
-}
-
-async function chatState(userId: string, chatId: number, sessionId: string): Promise<AgentChatState> {
-  const messages = await getAgentMessages(userId, sessionId);
-  const ids = proposalIds(messages);
-  const proposals = Object.fromEntries((await getProposals(userId, ids)).map((p) => [p.id, p]));
-  return { chatId, messages, proposals };
-}
-
-function validText(raw: string): string | { error: string } {
+function validText(raw: string, allowEmpty = false): string | { error: string } {
   const text = (raw ?? "").trim();
-  if (!text) return { error: "Type a message" };
+  if (!text && !allowEmpty) return { error: "Type a message" };
   if (text.length > MAX_MESSAGE_LENGTH) return { error: `Keep it under ${MAX_MESSAGE_LENGTH} characters` };
   return text;
 }
@@ -109,14 +102,7 @@ export async function deleteAgentChat(chatId: number): Promise<AgentResult<null>
 
   try {
     const messages = await getAgentMessages(userId, chat.opencode_session_id);
-    const ids = proposalIds(messages);
-    if (ids.length > 0) {
-      await pool.query(
-        `UPDATE agent_proposals SET status = 'rejected', decided_at = now()
-         WHERE user_id = $1 AND id = ANY($2::int[]) AND status = 'pending'`,
-        [userId, ids],
-      );
-    }
+    await rejectPendingProposals(userId, proposalIds(messages));
   } catch (err) {
     console.error("Could not clean up proposals of deleted chat:", err);
   }
@@ -130,33 +116,96 @@ export async function loadAgentChat(chatId: number): Promise<AgentResult<AgentCh
   return guard(() => chatState(userId, chat.id, chat.opencode_session_id));
 }
 
-/** Send a message. With no chatId a new chat is started. Waits for the whole
- *  agent turn (no streaming) and returns the updated conversation. */
+/** Send a message. With no chatId a new chat is started. Only *starts* the
+ *  agent's turn: it runs on in opencode whether or not the page stays open, and
+ *  the returned state has `running: true` — the page polls loadAgentChat until
+ *  the reply is in.
+ *
+ *  `image` (a `data:image/…` URL) attaches a receipt photo: it's stored in
+ *  agent_attachments, the agent only gets an "[Image attached: receipt #id]"
+ *  marker, and the turn runs in receipt mode (scan_receipt + create_transaction
+ *  only). The text is optional then. */
 export async function sendAgentMessage(
   chatId: number | null,
   rawText: string,
+  image?: string | null,
 ): Promise<AgentResult<AgentChatState>> {
   const { id: userId } = await requireUser();
-  const text = validText(rawText);
+  const text = validText(rawText, !!image);
   if (typeof text === "object") return { ok: false, error: text.error };
+  let photo: ReturnType<typeof parseImageDataUrl> = null;
+  if (image) {
+    if (image.length > MAX_IMAGE_DATA_URL_LENGTH) return { ok: false, error: "That photo is too large" };
+    photo = parseImageDataUrl(image);
+    if (!photo) return { ok: false, error: "That file isn't an image" };
+  }
 
   let chat = chatId === null ? null : await ownedChat(userId, chatId);
   if (chatId !== null && !chat) return { ok: false, error: "Chat not found" };
   if (rateLimited(userId)) return { ok: false, error: "Too many messages — wait a minute." };
 
   return guard(async () => {
+    if (chat && (await isSessionBusy(userId, chat.opencode_session_id))) {
+      throw new AgentUnavailableError(STILL_RUNNING);
+    }
     if (!chat) {
-      const title = text.length > 60 ? `${text.slice(0, 57)}…` : text;
+      const title = !text ? RECEIPT_CHAT_TITLE : text.length > 60 ? `${text.slice(0, 57)}…` : text;
       const sessionId = await createAgentSession(userId, title);
-      const { rows } = await pool.query<{ id: number; opencode_session_id: string }>(
+      const { rows } = await pool.query<ChatRow>(
         `INSERT INTO agent_chats (user_id, opencode_session_id, title)
          VALUES ($1, $2, $3) RETURNING id, opencode_session_id`,
         [userId, sessionId, title],
       );
       chat = rows[0];
     }
-    await sendAgentPrompt(userId, chat.opencode_session_id, text);
-    return chatState(userId, chat.id, chat.opencode_session_id);
+
+    if (!photo) {
+      await sendAgentPrompt(userId, chat.opencode_session_id, text);
+    } else {
+      const { rows } = await pool.query<{ id: number }>(
+        `INSERT INTO agent_attachments (user_id, chat_id, image, content_type)
+         VALUES ($1, $2, $3, $4) RETURNING id`,
+        [userId, chat.id, photo.bytes, photo.contentType],
+      );
+      const marker = attachmentMarker(rows[0].id);
+      const prompt = text ? `${text}\n\n${marker}` : marker;
+      await sendAgentPrompt(userId, chat.opencode_session_id, prompt, "receipt");
+    }
+    // opencode may not report the session busy for a moment after accepting
+    // the prompt — the turn was just started, so it is running.
+    return { ...(await chatState(userId, chat.id, chat.opencode_session_id)), running: true };
+  });
+}
+
+/** Stop the chat's running turn and undo it: abort it in opencode, then delete
+ *  the user's message and whatever the agent wrote in reply, and reject the
+ *  proposals it made — the chat is back where it was before that send. A chat
+ *  left empty (its first message was stopped) is removed. */
+export async function stopAgentMessage(chatId: number): Promise<AgentResult<StoppedTurn>> {
+  const { id: userId } = await requireUser();
+  const chat = await ownedChat(userId, chatId);
+  if (!chat) return { ok: false, error: "Chat not found" };
+
+  return guard(async () => {
+    const sessionId = chat.opencode_session_id;
+    if (!(await isSessionBusy(userId, sessionId))) {
+      throw new AgentUnavailableError("Already finished");
+    }
+    await abortAgentSession(userId, sessionId);
+    await waitUntilIdle(userId, sessionId);
+    const undone = await deleteLastTurn(userId, sessionId);
+    await rejectPendingProposals(userId, undone.proposalIds);
+
+    let state: AgentChatState | null = null;
+    if (undone.remaining === 0) {
+      await pool.query(
+        "UPDATE agent_chats SET deleted_at = now() WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL",
+        [chat.id, userId],
+      );
+    } else {
+      state = await chatState(userId, chat.id, sessionId);
+    }
+    return { state, text: undone.text, attachmentId: undone.attachmentId };
   });
 }
 
@@ -169,6 +218,11 @@ async function decide(
   const chat = await ownedChat(userId, chatId);
   if (!chat) return { ok: false, error: "Chat not found" };
   if (!Number.isInteger(proposalId) || proposalId <= 0) return { ok: false, error: "Invalid proposal" };
+  // Posting the decision note into a session mid-turn isn't safe; the UI
+  // disables Accept/Reject until the turn ends.
+  if (await isSessionBusy(userId, chat.opencode_session_id).catch(() => false)) {
+    return { ok: false, error: STILL_RUNNING };
+  }
 
   const result = await decideProposal(userId, proposalId, decision);
   if (!result.ok) return result;

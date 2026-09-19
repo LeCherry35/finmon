@@ -147,12 +147,12 @@ describe("scanReceiptForTransaction", () => {
     const [sql, params] = query.mock.calls[0];
     expect(sql).toMatch(/INSERT INTO receipts/);
     expect(sql).toMatch(/ON CONFLICT \(transaction_id\)/); // re-scan replaces
-    expect(sql).toMatch(/total = NULL/); // a new image invalidates the old total
     expect(params).toEqual([
       42,
       TEST_USER_ID,
       Buffer.from("AAAA", "base64"),
       "image/jpeg",
+      null, // a new image invalidates the old total
     ]);
   });
 

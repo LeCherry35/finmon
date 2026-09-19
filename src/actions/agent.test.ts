@@ -6,10 +6,14 @@ const { query, decideProposal, getProposals, oc } = vi.hoisted(() => ({
   decideProposal: vi.fn(),
   getProposals: vi.fn(),
   oc: {
+    abortAgentSession: vi.fn(),
     createAgentSession: vi.fn(),
+    deleteLastTurn: vi.fn(),
     getAgentMessages: vi.fn(),
+    isSessionBusy: vi.fn(),
     noteProposalDecision: vi.fn(),
     sendAgentPrompt: vi.fn(),
+    waitUntilIdle: vi.fn(),
   },
 }));
 
@@ -19,6 +23,7 @@ vi.mock("@/lib/agent-proposals", () => ({ decideProposal, getProposals }));
 vi.mock("@/lib/opencode", () => ({
   ...oc,
   AgentUnavailableError: class AgentUnavailableError extends Error {},
+  attachmentMarker: (id: number) => `[Image attached: receipt #${id}]`,
 }));
 
 import {
@@ -28,6 +33,7 @@ import {
   loadAgentChat,
   rejectProposal,
   sendAgentMessage,
+  stopAgentMessage,
 } from "@/actions/agent";
 
 const chatRow = { id: 5, opencode_session_id: "ses_1" };
@@ -38,6 +44,7 @@ beforeEach(() => {
   getProposals.mockReset().mockResolvedValue([]);
   for (const fn of Object.values(oc)) fn.mockReset();
   oc.getAgentMessages.mockResolvedValue([]);
+  oc.isSessionBusy.mockResolvedValue(false);
 });
 
 describe("sendAgentMessage", () => {
@@ -67,7 +74,58 @@ describe("sendAgentMessage", () => {
     expect(query.mock.calls[0][0]).toMatch(/INSERT INTO agent_chats/);
     expect(query.mock.calls[0][1]).toEqual([TEST_USER_ID, "ses_new", "How much did I spend?"]);
     expect(oc.sendAgentPrompt).toHaveBeenCalledWith(TEST_USER_ID, "ses_new", "How much did I spend?");
-    expect(result).toEqual({ ok: true, data: { chatId: 7, messages: [], proposals: {} } });
+    // Only starts the turn: it's reported running even before opencode says busy.
+    expect(result).toEqual({ ok: true, data: { chatId: 7, messages: [], proposals: {}, running: true } });
+  });
+
+  it("stores an attached photo and prompts in receipt mode with only a marker", async () => {
+    query
+      .mockResolvedValueOnce({ rows: [chatRow] }) // ownedChat
+      .mockResolvedValueOnce({ rows: [{ id: 42 }] }); // INSERT agent_attachments
+
+    const result = await sendAgentMessage(5, "  ", "data:image/jpeg;base64,AAAA");
+
+    expect(result.ok).toBe(true);
+    expect(query.mock.calls[1][0]).toMatch(/INSERT INTO agent_attachments/);
+    expect(query.mock.calls[1][1]).toEqual([TEST_USER_ID, 5, Buffer.from("AAAA", "base64"), "image/jpeg"]);
+    expect(oc.sendAgentPrompt).toHaveBeenCalledWith(TEST_USER_ID, "ses_1", "[Image attached: receipt #42]", "receipt");
+  });
+
+  it("keeps the user's text before the marker, and titles an image-only chat", async () => {
+    oc.createAgentSession.mockResolvedValue("ses_new");
+    query
+      .mockResolvedValueOnce({ rows: [{ id: 7, opencode_session_id: "ses_new" }] })
+      .mockResolvedValueOnce({ rows: [{ id: 43 }] });
+    await sendAgentMessage(null, "", "data:image/png;base64,AAAA");
+    expect(oc.createAgentSession).toHaveBeenCalledWith(TEST_USER_ID, "Receipt scan");
+
+    query.mockResolvedValueOnce({ rows: [chatRow] }).mockResolvedValueOnce({ rows: [{ id: 44 }] });
+    await sendAgentMessage(5, "category Food", "data:image/png;base64,AAAA");
+    expect(oc.sendAgentPrompt).toHaveBeenLastCalledWith(
+      TEST_USER_ID,
+      "ses_1",
+      "category Food\n\n[Image attached: receipt #44]",
+      "receipt",
+    );
+  });
+
+  it.each([
+    ["data:text/plain;base64,AAAA", "That file isn't an image"],
+    ["data:image/jpeg;base64," + "A".repeat(3_500_000), "That photo is too large"],
+  ])("rejects a bad image (%#)", async (image, error) => {
+    expect(await sendAgentMessage(null, "", image)).toEqual({ ok: false, error });
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it("refuses to send into a chat whose turn is still running", async () => {
+    query.mockResolvedValueOnce({ rows: [chatRow] });
+    oc.isSessionBusy.mockResolvedValue(true);
+    expect(await sendAgentMessage(5, "two")).toEqual({
+      ok: false,
+      error: "The assistant is still answering. Wait, or stop it first.",
+    });
+    expect(oc.isSessionBusy).toHaveBeenCalledWith(TEST_USER_ID, "ses_1");
+    expect(oc.sendAgentPrompt).not.toHaveBeenCalled();
   });
 
   it("attaches the user's proposals referenced by tool calls", async () => {
@@ -81,6 +139,57 @@ describe("sendAgentMessage", () => {
 
     expect(getProposals).toHaveBeenCalledWith(TEST_USER_ID, [12]);
     expect(result.ok && result.data.proposals).toEqual({ 12: { id: 12, status: "pending" } });
+  });
+});
+
+describe("stopAgentMessage", () => {
+  const undone = { proposalIds: [12], text: "delete everything", attachmentId: null, remaining: 2 };
+
+  it("refuses a chat the user doesn't own", async () => {
+    query.mockResolvedValueOnce({ rows: [] });
+    expect(await stopAgentMessage(5)).toEqual({ ok: false, error: "Chat not found" });
+    expect(oc.abortAgentSession).not.toHaveBeenCalled();
+  });
+
+  it("reports a turn that already finished, without undoing anything", async () => {
+    query.mockResolvedValueOnce({ rows: [chatRow] });
+    expect(await stopAgentMessage(5)).toEqual({ ok: false, error: "Already finished" });
+    expect(oc.abortAgentSession).not.toHaveBeenCalled();
+    expect(oc.deleteLastTurn).not.toHaveBeenCalled();
+  });
+
+  it("aborts, waits, deletes the last turn and rejects its proposals", async () => {
+    query.mockResolvedValueOnce({ rows: [chatRow] }).mockResolvedValue({ rows: [] });
+    oc.isSessionBusy.mockResolvedValueOnce(true).mockResolvedValue(false);
+    oc.deleteLastTurn.mockResolvedValue(undone);
+
+    const result = await stopAgentMessage(5);
+
+    expect(oc.abortAgentSession).toHaveBeenCalledWith(TEST_USER_ID, "ses_1");
+    expect(oc.waitUntilIdle).toHaveBeenCalledWith(TEST_USER_ID, "ses_1");
+    expect(oc.deleteLastTurn).toHaveBeenCalledWith(TEST_USER_ID, "ses_1");
+    const reject = query.mock.calls.find(([sql]) => /UPDATE agent_proposals/.test(sql));
+    expect(reject?.[1]).toEqual([TEST_USER_ID, [12]]);
+    expect(result).toEqual({
+      ok: true,
+      data: {
+        state: { chatId: 5, messages: [], proposals: {}, running: false },
+        text: "delete everything",
+        attachmentId: null,
+      },
+    });
+  });
+
+  it("removes a chat left empty (its first message was stopped)", async () => {
+    query.mockResolvedValueOnce({ rows: [chatRow] }).mockResolvedValue({ rows: [] });
+    oc.isSessionBusy.mockResolvedValueOnce(true);
+    oc.deleteLastTurn.mockResolvedValue({ ...undone, proposalIds: [], remaining: 0, attachmentId: 42 });
+
+    const result = await stopAgentMessage(5);
+
+    const softDelete = query.mock.calls.find(([sql]) => /UPDATE agent_chats SET deleted_at/.test(sql));
+    expect(softDelete?.[1]).toEqual([5, TEST_USER_ID]);
+    expect(result).toEqual({ ok: true, data: { state: null, text: "delete everything", attachmentId: 42 } });
   });
 });
 
@@ -109,6 +218,16 @@ describe("accept/reject", () => {
     expect(decideProposal).toHaveBeenCalledWith(TEST_USER_ID, 12, "reject");
     expect(oc.noteProposalDecision).toHaveBeenCalledWith(TEST_USER_ID, "ses_1", expect.stringMatching(/REJECTED proposal 12/));
     expect(result.ok).toBe(true);
+  });
+
+  it("refuses while the chat's turn is still running", async () => {
+    query.mockResolvedValue({ rows: [chatRow] });
+    oc.isSessionBusy.mockResolvedValue(true);
+    expect(await acceptProposal(5, 12)).toEqual({
+      ok: false,
+      error: "The assistant is still answering. Wait, or stop it first.",
+    });
+    expect(decideProposal).not.toHaveBeenCalled();
   });
 
   it("passes through a decision error", async () => {

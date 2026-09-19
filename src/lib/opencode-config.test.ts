@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/agent-token", () => ({ signAgentToken: vi.fn(), verifyAgentToken: vi.fn() }));
 
 import { buildOpencodeConfig } from "@/lib/opencode-config";
-import { lockdownProblems } from "@/lib/opencode";
+import { attachmentMarker, lockdownProblems, toAgentMessage } from "@/lib/opencode";
 
 describe("buildOpencodeConfig", () => {
   const cfg = buildOpencodeConfig("tok", { mcpUrl: "http://app:3000/api/agent/mcp", model: "openai/gpt-4.1-mini" });
@@ -101,5 +101,26 @@ describe("lockdownProblems", () => {
     expect(
       lockdownProblems([{ name: "finmon", permission: rules(deny, allowFinmon) }], { finmon: {}, github: {} }).join(),
     ).toMatch(/extra MCP/);
+  });
+});
+
+describe("toAgentMessage", () => {
+  const msg = (role: "user" | "assistant", text: string) => ({
+    info: { id: "m1", role, time: { created: 1 } },
+    parts: [{ id: "p1", type: "text", text }],
+  });
+
+  it("strips the receipt marker from a user message and exposes the attachment id", () => {
+    expect(toAgentMessage(msg("user", `category Food\n\n${attachmentMarker(42)}`))).toMatchObject({
+      text: "category Food",
+      attachmentId: 42,
+    });
+    // An image-only message still renders (as the photo chip).
+    expect(toAgentMessage(msg("user", attachmentMarker(7)))).toMatchObject({ text: "", attachmentId: 7 });
+  });
+
+  it("leaves other messages alone", () => {
+    expect(toAgentMessage(msg("user", "hello"))).toMatchObject({ text: "hello", attachmentId: null });
+    expect(toAgentMessage(msg("assistant", `see ${attachmentMarker(1)}`))?.attachmentId).toBeNull();
   });
 });

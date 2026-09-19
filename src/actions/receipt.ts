@@ -6,6 +6,8 @@ import { userOwnsTransaction } from "@/db/queries";
 import { requireUser } from "@/lib/dal";
 import { isPlausibleScanDate, scanReceipt } from "@/lib/receipt-scan";
 import { insertProducts, recomputeTransactionStatus } from "@/lib/mutations/products";
+import { parseImageDataUrl } from "@/lib/image-data-url";
+import { upsertReceipt } from "@/lib/receipts";
 import type { ActionResult } from "@/actions/transactions";
 
 /**
@@ -44,16 +46,6 @@ export async function startReceiptScan(formData: FormData): Promise<ActionResult
   return { ok: true };
 }
 
-/** `data:image/jpeg;base64,...` → decoded bytes + mime, or null when the URL
- *  isn't a base64 image data URL (nothing storable). */
-function parseImageDataUrl(
-  dataUrl: string,
-): { bytes: Buffer; contentType: string } | null {
-  const m = /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i.exec(dataUrl);
-  if (!m) return null;
-  return { bytes: Buffer.from(m[2], "base64"), contentType: m[1].toLowerCase() };
-}
-
 /** Persist the uploaded receipt image for a transaction (one per transaction —
  *  a re-scan replaces it via upsert). Storage is secondary to scanning: a
  *  failure here is logged but never aborts the scan. */
@@ -67,13 +59,7 @@ async function saveReceiptImage(
     if (!parsed) return;
     // total = NULL: a new image invalidates whatever the previous scan read —
     // the follow-up scan fills it back in.
-    await pool.query(
-      `INSERT INTO receipts (transaction_id, user_id, image, content_type)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (transaction_id)
-       DO UPDATE SET image = EXCLUDED.image, content_type = EXCLUDED.content_type, created_at = now(), total = NULL`,
-      [transactionId, userId, parsed.bytes, parsed.contentType],
-    );
+    await upsertReceipt(userId, transactionId, parsed);
   } catch (err) {
     console.error(
       `Failed to store receipt image for transaction ${transactionId}:`,

@@ -10,6 +10,7 @@ const actions = vi.hoisted(() => ({
   loadAgentChat: vi.fn(),
   rejectProposal: vi.fn(),
   sendAgentMessage: vi.fn(),
+  stopAgentMessage: vi.fn(),
 }));
 vi.mock("@/actions/agent", () => actions);
 
@@ -17,10 +18,11 @@ import AssistantView from "@/components/agent/AssistantView";
 
 const proposal = { id: 12, status: "pending", summary: "Delete transaction 3", error: null };
 
-function chatState(opts: { chatId?: number; withProposal?: boolean; status?: string } = {}) {
-  const { chatId = 7, withProposal = false, status = "pending" } = opts;
+function chatState(opts: { chatId?: number; withProposal?: boolean; status?: string; running?: boolean } = {}) {
+  const { chatId = 7, withProposal = false, status = "pending", running = false } = opts;
   return {
     chatId,
+    running,
     messages: [
       { id: "u1", role: "user", text: "hello", tools: [], error: null, createdAt: 1 },
       {
@@ -65,12 +67,12 @@ describe("AssistantView", () => {
 
     await user.type(input(), "hello{Enter}");
     await screen.findByText("Here you go");
-    expect(actions.sendAgentMessage).toHaveBeenCalledWith(null, "hello");
+    expect(actions.sendAgentMessage).toHaveBeenCalledWith(null, "hello", null);
 
     await user.type(input(), "again");
     await waitFor(() => expect(sendBtn()).toBeEnabled());
     await user.click(sendBtn());
-    await waitFor(() => expect(actions.sendAgentMessage).toHaveBeenLastCalledWith(7, "again"));
+    await waitFor(() => expect(actions.sendAgentMessage).toHaveBeenLastCalledWith(7, "again", null));
     expect(replaceState).not.toHaveBeenCalled();
   });
 
@@ -125,7 +127,7 @@ describe("AssistantView", () => {
     render(<AssistantView initialChats={[]} />);
 
     await user.type(input(), "hi{Enter}");
-    await screen.findByText("The assistant took too long to answer. Try again in a moment.");
+    await screen.findByText("Couldn't reach the assistant. Try again.");
     expect(screen.queryByLabelText("Thinking")).toBeNull();
     expect(input()).toHaveValue("hi");
     expect(sendBtn()).toBeEnabled();
@@ -146,7 +148,7 @@ describe("AssistantView", () => {
 
     expect(await screen.findByRole("button", { name: "Accept" })).toBeEnabled();
     expect(actions.loadAgentChat).toHaveBeenCalledWith(7);
-    await screen.findByText("The assistant took too long to answer. Try again in a moment.");
+    await screen.findByText("Couldn't reach the assistant. Try again.");
     expect(input()).toHaveValue("delete it");
     expect(sendBtn()).toBeEnabled();
   });
@@ -159,7 +161,7 @@ describe("AssistantView", () => {
     await user.type(input(), "my draft");
     await user.click(screen.getByRole("button", { name: "Am I over plan anywhere?" }));
     await screen.findByText("nope");
-    expect(actions.sendAgentMessage).toHaveBeenCalledWith(null, "Am I over plan anywhere?");
+    expect(actions.sendAgentMessage).toHaveBeenCalledWith(null, "Am I over plan anywhere?", null);
     expect(input()).toHaveValue("my draft");
   });
 
@@ -176,5 +178,162 @@ describe("AssistantView", () => {
     await screen.findByText("Already accepted");
     await screen.findByText("Applied");
     expect(actions.loadAgentChat).toHaveBeenCalledWith(7);
+  });
+
+  it("sends a staged receipt photo without text and shows it as a chip", async () => {
+    const user = userEvent.setup();
+    const reply = deferred<unknown>();
+    actions.sendAgentMessage.mockReturnValue(reply.promise);
+    render(<AssistantView initialChats={[]} />);
+
+    expect(sendBtn()).toBeDisabled();
+    const file = new File(["img"], "receipt.jpg", { type: "image/jpeg" });
+    await user.upload(screen.getByLabelText("Receipt photo"), file);
+    await screen.findByRole("img", { name: "Receipt photo" });
+    expect(sendBtn()).toBeEnabled();
+
+    await user.click(sendBtn());
+    expect(actions.sendAgentMessage).toHaveBeenCalledWith(
+      null,
+      "",
+      expect.stringMatching(/^data:image\/jpeg;base64,/),
+    );
+    // The composer is cleared; the pending bubble carries the photo chip.
+    expect(screen.queryByRole("img", { name: "Receipt photo" })).not.toBeInTheDocument();
+    expect(screen.getByText("Receipt photo")).toBeInTheDocument();
+
+    await act(async () => reply.resolve({ ok: false, error: "nope" }));
+    // A failed send puts the photo back.
+    await screen.findByRole("img", { name: "Receipt photo" });
+  });
+
+  it("follows a running turn: dots and Stop, polling until the reply is in", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const running = chatState({ running: true });
+    running.messages = running.messages.slice(0, 1); // only the user's message so far
+    actions.sendAgentMessage.mockResolvedValue({ ok: true, data: running });
+    actions.loadAgentChat
+      .mockResolvedValueOnce({ ok: true, data: running })
+      .mockResolvedValue({ ok: true, data: chatState({ withProposal: true }) });
+    render(<AssistantView initialChats={[]} />);
+
+    await user.type(input(), "hello{Enter}");
+    expect(await screen.findByLabelText("Thinking")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Send" })).not.toBeInTheDocument();
+
+    await act(async () => vi.advanceTimersByTimeAsync(2000)); // still running
+    expect(screen.getByLabelText("Thinking")).toBeInTheDocument();
+    await act(async () => vi.advanceTimersByTimeAsync(2000)); // done
+    await screen.findByText("Here you go");
+    expect(screen.queryByLabelText("Thinking")).not.toBeInTheDocument();
+    expect(actions.loadAgentChat).toHaveBeenCalledTimes(2);
+    expect(actions.loadAgentChat).toHaveBeenCalledWith(7);
+
+    // Finished: no more polling.
+    await act(async () => vi.advanceTimersByTimeAsync(6000));
+    expect(actions.loadAgentChat).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
+  });
+
+  it("stops polling when the page is left", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    actions.sendAgentMessage.mockResolvedValue({ ok: true, data: chatState({ running: true }) });
+    actions.loadAgentChat.mockResolvedValue({ ok: true, data: chatState({ running: true }) });
+    const { unmount } = render(<AssistantView initialChats={[]} />);
+
+    await user.type(input(), "hello{Enter}");
+    await screen.findByRole("button", { name: "Stop" });
+    unmount();
+    await act(async () => vi.advanceTimersByTimeAsync(10_000));
+    expect(actions.loadAgentChat).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("shows the dots when reopening a chat whose turn is still running, and blocks Accept", async () => {
+    const user = userEvent.setup();
+    actions.loadAgentChat.mockResolvedValue({ ok: true, data: chatState({ withProposal: true, running: true }) });
+    render(<AssistantView initialChats={[{ id: 7, title: "hello", created_at: "2026-09-17T10:00:00Z" }]} />);
+
+    await user.click(screen.getByRole("button", { name: /New chat/ }));
+    await user.click(await screen.findByRole("button", { name: /hello/ }));
+
+    expect(await screen.findByLabelText("Thinking")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Accept" })).toBeDisabled();
+  });
+
+  it("Stop undoes the turn and puts the message and photo back in the composer", async () => {
+    const user = userEvent.setup();
+    actions.sendAgentMessage.mockResolvedValue({ ok: true, data: chatState({ running: true }) });
+    actions.stopAgentMessage.mockResolvedValue({
+      ok: true,
+      data: { state: null, text: "delete everything", attachmentId: 42 },
+    });
+    render(<AssistantView initialChats={[]} />);
+
+    await user.upload(screen.getByLabelText("Receipt photo"), new File(["img"], "r.jpg", { type: "image/jpeg" }));
+    await screen.findByRole("img", { name: "Receipt photo" });
+    await user.type(input(), "delete everything{Enter}");
+    await user.click(await screen.findByRole("button", { name: "Stop" }));
+
+    expect(actions.stopAgentMessage).toHaveBeenCalledWith(7);
+    await waitFor(() => expect(input()).toHaveValue("delete everything"));
+    expect(screen.getByRole("img", { name: "Receipt photo" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Thinking")).not.toBeInTheDocument();
+    expect(screen.queryByText("Here you go")).not.toBeInTheDocument(); // back to a new chat
+    expect(actions.listAgentChats).toHaveBeenCalled();
+    expect(sendBtn()).toBeEnabled();
+  });
+
+  it("shows the finished reply when Stop comes too late", async () => {
+    const user = userEvent.setup();
+    actions.sendAgentMessage.mockResolvedValue({ ok: true, data: chatState({ running: true }) });
+    actions.stopAgentMessage.mockResolvedValue({ ok: false, error: "Already finished" });
+    actions.loadAgentChat.mockResolvedValue({ ok: true, data: chatState() });
+    render(<AssistantView initialChats={[]} />);
+
+    await user.type(input(), "hello{Enter}");
+    await user.click(await screen.findByRole("button", { name: "Stop" }));
+
+    await waitFor(() => expect(screen.queryByLabelText("Thinking")).not.toBeInTheDocument());
+    expect(screen.getByText("Here you go")).toBeInTheDocument();
+    expect(screen.queryByText("Already finished")).not.toBeInTheDocument();
+    expect(input()).toHaveValue("");
+  });
+
+  it("shows one agent row per turn: tool-only steps add no extra icons", async () => {
+    const user = userEvent.setup();
+    const toolStep = (id: string) => ({
+      id, role: "assistant", text: "", error: null, createdAt: 2, attachmentId: null,
+      tools: [{ name: "search_transactions", status: "completed", proposalId: null, error: null }],
+    });
+    const state = chatState();
+    state.messages = [state.messages[0], toolStep("s1"), toolStep("s2"), state.messages[1]];
+    actions.sendAgentMessage.mockResolvedValue({ ok: true, data: { ...state, running: true } });
+    render(<AssistantView initialChats={[]} />);
+
+    await user.type(input(), "hello{Enter}");
+    const dots = await screen.findByLabelText("Thinking");
+    const reply = screen.getByText("Here you go");
+    // One row (one icon) holds the whole turn: the reply and the running dots.
+    const rows = screen.getAllByRole("group", { name: "Assistant" });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toContainElement(reply);
+    expect(rows[0]).toContainElement(dots);
+  });
+
+  it("can remove a staged photo", async () => {
+    const user = userEvent.setup();
+    render(<AssistantView initialChats={[]} />);
+    await user.upload(
+      screen.getByLabelText("Receipt photo"),
+      new File(["img"], "r.jpg", { type: "image/jpeg" }),
+    );
+    await user.click(await screen.findByRole("button", { name: "Remove photo" }));
+    expect(screen.queryByRole("img", { name: "Receipt photo" })).not.toBeInTheDocument();
+    expect(sendBtn()).toBeDisabled();
   });
 });

@@ -1,5 +1,6 @@
 import "server-only";
 import { z } from "zod";
+import { pool } from "@/db";
 import {
   getAvailableMonths,
   getCategories,
@@ -16,9 +17,18 @@ import {
   updateTransactionFor,
   verifyTransactionFor,
 } from "@/lib/mutations/transactions";
-import { addProductFor, deleteProductFor, updateProductFor } from "@/lib/mutations/products";
+import {
+  addProductFor,
+  deleteProductFor,
+  insertProducts,
+  recomputeTransactionStatus,
+  updateProductFor,
+} from "@/lib/mutations/products";
 import { createCategoryFor, updateCategoryFor } from "@/lib/mutations/categories";
 import { upsertPlanFor } from "@/lib/mutations/plans";
+import { toImageDataUrl } from "@/lib/image-data-url";
+import { scanReceipt, type ScanResult } from "@/lib/receipt-scan";
+import { upsertReceipt } from "@/lib/receipts";
 import type { Transaction } from "@/actions/transactions";
 
 // The complete set of things the finmon agent can do. The MCP route
@@ -133,6 +143,27 @@ function compactTransaction(t: Transaction) {
   };
 }
 
+type Attachment = { id: number; image: Buffer; content_type: string; scan: ScanResult | null };
+
+/** A receipt photo the user attached in the chat (agent_attachments), only their own. */
+async function requireAttachment(userId: string, id: number): Promise<Attachment> {
+  const { rows } = await pool.query<Attachment>(
+    "SELECT id, image, content_type, scan FROM agent_attachments WHERE id = $1 AND user_id = $2",
+    [id, userId],
+  );
+  if (!rows[0]) throw new AgentToolError(`Receipt ${id} not found`);
+  return rows[0];
+}
+
+/** The attachment's latest scan — create_transaction attaches exactly that. */
+async function requireScannedAttachment(userId: string, id: number) {
+  const attachment = await requireAttachment(userId, id);
+  if (!attachment.scan) throw new AgentToolError(`Receipt ${id} hasn't been scanned yet — call scan_receipt first`);
+  return { ...attachment, scan: attachment.scan };
+}
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
 // ---------------------------------------------------------------------------
 // Input schemas
 
@@ -165,6 +196,9 @@ const createTransactionInput = z.object({
     .boolean()
     .optional()
     .describe("Set true only if the user explicitly wants a new category named category_name."),
+  receipt_id: ID.optional().describe(
+    "A scanned chat receipt photo: its image and latest scan's line items are attached to the transaction.",
+  ),
 });
 
 const updateTransactionInput = z.object({
@@ -290,15 +324,52 @@ export const AGENT_TOOLS: AgentTool[] = [
     requiresApproval: false,
     run: (userId, i) => getPlansForMonth(userId, i.month),
   }),
+  tool({
+    name: "scan_receipt",
+    description:
+      "Read a receipt photo the user attached in the chat ([Image attached: receipt #<id>]). Every call re-reads the image, so call again if the result looks wrong; the latest scan is what create_transaction attaches.",
+    input: z.object({ receipt_id: ID }),
+    requiresApproval: false,
+    run: async (userId, i) => {
+      const attachment = await requireAttachment(userId, i.receipt_id);
+      const categories = await getCategories(userId);
+      let scan: ScanResult;
+      try {
+        scan = await scanReceipt(
+          toImageDataUrl(attachment.image, attachment.content_type),
+          categories.map((c) => c.name),
+        );
+      } catch (err) {
+        console.error(`scan_receipt ${i.receipt_id} failed:`, err instanceof Error ? err.message : err);
+        throw new AgentToolError("Scanning the receipt failed. Try again, or tell the user.");
+      }
+      await pool.query("UPDATE agent_attachments SET scan = $1 WHERE id = $2 AND user_id = $3", [
+        JSON.stringify(scan),
+        attachment.id,
+        userId,
+      ]);
+      return {
+        receipt_id: attachment.id,
+        store: scan.store,
+        total: scan.total,
+        date: scan.date,
+        suggested_category: scan.category,
+        product_cost_sum: round2(scan.products.reduce((sum, p) => sum + (p.cost ?? 0), 0)),
+        products: scan.products.map((p) => ({ name: p.name, cost: p.cost, amount: p.amount, unit: p.unit })),
+      };
+    },
+  }),
 
   // ---- writes: proposals the user must accept ----
   tool({
     name: "create_transaction",
-    description: "Propose a new transaction. Needs at least an amount or a category.",
+    description:
+      "Propose a new transaction. Needs at least an amount, a category or a scanned receipt_id.",
     input: createTransactionInput,
     requiresApproval: true,
     describe: async (userId, i) => {
-      if (i.amount == null && !i.category_name?.trim())
+      const receipt = i.receipt_id ? await requireScannedAttachment(userId, i.receipt_id) : null;
+      if (i.amount == null && !i.category_name?.trim() && !receipt)
         throw new AgentToolError("Add an amount or a category");
       let category = "—";
       if (i.category_name?.trim()) {
@@ -318,16 +389,36 @@ export const AGENT_TOOLS: AgentTool[] = [
         `category: ${category}`,
         `store: ${fmt(i.store)}`,
         `note: ${fmt(i.note)}`,
+        ...(receipt
+          ? [`receipt: ${receipt.scan.products.length} products, total ${fmt(receipt.scan.total)}`]
+          : []),
       ].join("\n");
     },
-    run: async (userId, { new_category: _new, ...i }) => {
+    run: async (userId, { new_category: _new, receipt_id, ...i }) => {
       // Re-resolve at accept time: use the stored spelling of an existing category.
       if (i.category_name?.trim()) {
         const { category } = await resolveCategoryName(userId, i.category_name);
         if (category) i.category_name = category.name;
       }
-      const r = unwrap(await createTransactionFor(userId, toFormData(i)));
-      return { transaction_id: r.ok ? r.id : null };
+      const receipt = receipt_id ? await requireScannedAttachment(userId, receipt_id) : null;
+      // has_receipt lets a receipt stand in for a missing amount/category, as on
+      // the create form; the row starts 'processing' until the recompute below.
+      const fd = toFormData({ ...i, ...(receipt && { has_receipt: "1" }) });
+      const r = unwrap(await createTransactionFor(userId, fd));
+      if (!r.ok || !receipt) return { transaction_id: r.ok ? r.id : null };
+      try {
+        await upsertReceipt(
+          userId,
+          r.id,
+          { bytes: receipt.image, contentType: receipt.content_type },
+          receipt.scan.total,
+        );
+        await insertProducts(userId, r.id, receipt.scan.products);
+      } finally {
+        // Never leave the row on 'processing'.
+        await recomputeTransactionStatus(userId, r.id);
+      }
+      return { transaction_id: r.id };
     },
   }),
   tool({

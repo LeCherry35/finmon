@@ -8,6 +8,26 @@ Entry shape: `## <version> — <YYYY-MM-DD> — <headline>`, then **Added / Chan
 
 ---
 
+## 0.13.0 — 2026-09-19 — Scan receipts in the assistant chat
+
+### Added
+- The assistant composer has a camera button. Attach a receipt photo (text optional) and the assistant scans it and proposes a transaction. On Accept, the transaction gets the scanned line items as products, the receipt total and the stored photo ("View receipt"), the same as scanning on the create form.
+- The agent never sees the image. Its message carries an `[Image attached: receipt #<id>]` marker, and a new `scan_receipt` tool runs the existing OpenAI receipt scan on the stored photo. The agent can call it again if the result looks wrong; the latest scan is what gets attached. A turn with a photo gets extra receipt instructions and only the `scan_receipt` and `create_transaction` tools. `scan_receipt` also stays available in later turns ("rescan it").
+- `create_transaction` takes an optional `receipt_id`. A scanned receipt can stand in for a missing amount or category.
+- **Stop button**: while the assistant is answering, Send turns into Stop. Stopping aborts the turn, deletes your message and any partial reply, rejects proposals it made, and puts your text (and photo) back in the input, so you continue from the same place. Stopping the first message of a new chat removes that chat.
+
+### Changed
+- **Replies no longer depend on the page staying open.** Sending only starts the assistant's turn (opencode `prompt_async`); it runs and is saved on the server even if you switch pages, close the tab or lose the connection. Reopening the chat shows the reply, or the thinking dots and Stop while it's still working (the page checks every 2 s). This also removes the ~90 s limit on a turn.
+- One running turn per chat: sending, Accept and Reject in that chat wait until it finishes or is stopped.
+
+### Migrations
+- `018_agent_attachments.sql`: the `agent_attachments` table (chat photos plus their latest scan).
+
+### Deploy notes
+- Needs `OPENAI_API_KEY` (already required for receipt scanning). `git pull` + `docker compose up -d --build`; the migration runs on startup.
+
+---
+
 ## 0.12.1 — 2026-09-18 — Assistant replies render as Markdown
 
 ### Changed

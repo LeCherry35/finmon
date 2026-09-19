@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { signAgentToken, verifyAgentToken } from "@/lib/agent-token";
-import { AGENT_NAME, MCP_KEY, buildOpencodeConfig } from "@/lib/opencode-config";
+import { AGENT_NAME, MCP_KEY, RECEIPT_SYSTEM_PROMPT, buildOpencodeConfig } from "@/lib/opencode-config";
 
 // Talks to the opencode sidecar (`opencode serve`) over its HTTP API.
 //
@@ -64,7 +64,7 @@ const userDirName = (userId: string) =>
 
 async function api<T>(
   e: Env,
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "DELETE",
   pathname: string,
   directory: string,
   body?: unknown,
@@ -83,9 +83,8 @@ async function api<T>(
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
       cache: "no-store",
-      // A full agent turn (several tool calls) can take a while, but the
-      // browser's request has to finish under Cloudflare's 100s origin limit.
-      signal: AbortSignal.timeout(90_000),
+      // Turns run in the background (prompt_async), so every call is short.
+      signal: AbortSignal.timeout(30_000),
     });
   } catch (err) {
     console.error(`opencode ${method} ${pathname} failed:`, err);
@@ -96,6 +95,7 @@ async function api<T>(
     console.error(`opencode ${method} ${pathname} → ${res.status}: ${text.slice(0, 500)}`);
     throw new AgentUnavailableError("The assistant returned an error.");
   }
+  if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
 
@@ -212,6 +212,16 @@ const SESSION_PERMISSIONS = [
 /** Tool switches sent with every prompt: nothing but finmon tools. */
 const PROMPT_TOOLS = { "*": false, [`${MCP_KEY}_*`]: true };
 
+/** A turn with an attached receipt photo: only scanning and proposing the
+ *  transaction. Narrows PROMPT_TOOLS — the session/config lockdown is unchanged. */
+const RECEIPT_PROMPT_TOOLS = {
+  "*": false,
+  [`${MCP_KEY}_scan_receipt`]: true,
+  [`${MCP_KEY}_create_transaction`]: true,
+};
+
+export type PromptMode = "chat" | "receipt";
+
 export async function createAgentSession(userId: string, title: string): Promise<string> {
   const e = env();
   const directory = await ensureUserInstance(userId, e);
@@ -233,7 +243,7 @@ type RawPart = {
   tool?: string;
   state?: { status: string; input?: unknown; output?: string; error?: string };
 };
-type RawMessage = {
+export type RawMessage = {
   info: { id: string; role: "user" | "assistant"; time: { created: number }; error?: { name?: string; data?: { message?: string } } };
   parts: RawPart[];
 };
@@ -247,15 +257,29 @@ export type AgentMessage = {
   /** finmon tool calls, in order. */
   tools: { name: string; status: "running" | "completed" | "error"; proposalId: number | null; error: string | null }[];
   error: string | null;
+  /** The receipt photo attached to a user message (agent_attachments.id). */
+  attachmentId: number | null;
 };
+
+/** How an attached photo is referenced in the user's message — the agent only
+ *  ever sees this marker, and passes the id to scan_receipt. */
+export const attachmentMarker = (id: number) => `[Image attached: receipt #${id}]`;
+const ATTACHMENT_MARKER_RE = /\s*\[Image attached: receipt #(\d+)\]\s*$/;
 
 /** Marks messages finmon posts on the user's behalf (proposal decisions). */
 const NOTE_PREFIX = "[finmon] ";
 
-function toAgentMessage(m: RawMessage): AgentMessage | null {
+/** Exported for tests. */
+export function toAgentMessage(m: RawMessage): AgentMessage | null {
   const texts = m.parts.filter((p) => p.type === "text" && p.text && !p.synthetic).map((p) => p.text!);
-  const text = texts.join("\n\n").trim();
+  let text = texts.join("\n\n").trim();
   if (m.info.role === "user" && text.startsWith(NOTE_PREFIX)) return null;
+  let attachmentId: number | null = null;
+  const marker = m.info.role === "user" ? ATTACHMENT_MARKER_RE.exec(text) : null;
+  if (marker) {
+    attachmentId = Number(marker[1]);
+    text = text.slice(0, marker.index).trim();
+  }
 
   const tools = m.parts
     .filter((p) => p.type === "tool" && p.tool?.startsWith(`${MCP_KEY}_`))
@@ -282,8 +306,8 @@ function toAgentMessage(m: RawMessage): AgentMessage | null {
     });
 
   const err = m.info.error ? m.info.error.data?.message ?? m.info.error.name ?? "Error" : null;
-  if (!text && tools.length === 0 && !err) return null;
-  return { id: m.info.id, role: m.info.role, createdAt: m.info.time.created, text, tools, error: err };
+  if (!text && tools.length === 0 && !err && attachmentId === null) return null;
+  return { id: m.info.id, role: m.info.role, createdAt: m.info.time.created, text, tools, error: err, attachmentId };
 }
 
 export async function getAgentMessages(userId: string, sessionId: string): Promise<AgentMessage[]> {
@@ -298,19 +322,91 @@ export async function getAgentMessages(userId: string, sessionId: string): Promi
   return raw.map(toAgentMessage).filter((m): m is AgentMessage => m !== null);
 }
 
-/** Send the user's message and wait for the whole agent turn to finish. */
-export async function sendAgentPrompt(userId: string, sessionId: string, text: string): Promise<void> {
+/** Start the agent's turn on the user's message and return at once; the turn
+ *  runs on in opencode (see isSessionBusy).
+ *  `receipt` mode (a photo is attached) adds the receipt instructions and
+ *  limits the turn to scan_receipt + create_transaction. */
+export async function sendAgentPrompt(
+  userId: string,
+  sessionId: string,
+  text: string,
+  mode: PromptMode = "chat",
+): Promise<void> {
   const e = env();
   const directory = await ensureUserInstance(userId, e);
   await assertToolLockdown(e, directory);
   const today = new Date().toISOString().slice(0, 10);
-  await api(e, "POST", `/session/${encodeURIComponent(sessionId)}/message`, directory, {
+  // prompt_async stores the user message and returns (204) while the turn
+  // runs on in opencode — so it doesn't depend on the browser staying around.
+  await api(e, "POST", `/session/${encodeURIComponent(sessionId)}/prompt_async`, directory, {
     agent: AGENT_NAME,
     model: modelRef(e),
-    tools: PROMPT_TOOLS,
-    system: `Today is ${today}.`,
+    tools: mode === "receipt" ? RECEIPT_PROMPT_TOOLS : PROMPT_TOOLS,
+    system: mode === "receipt" ? `Today is ${today}.\n\n${RECEIPT_SYSTEM_PROMPT}` : `Today is ${today}.`,
     parts: [{ type: "text", text }],
   });
+}
+
+/** Whether the session has a turn running (opencode's own status, so it's
+ *  right across page changes and app restarts). Idle sessions aren't listed. */
+export async function isSessionBusy(userId: string, sessionId: string): Promise<boolean> {
+  const e = env();
+  const directory = await ensureUserInstance(userId, e);
+  const status = await api<Record<string, { type: string } | undefined>>(e, "GET", "/session/status", directory);
+  const type = status?.[sessionId]?.type;
+  return type === "busy" || type === "retry";
+}
+
+const IDLE_POLL_MS = 500;
+const IDLE_MAX_WAIT_MS = 15_000;
+
+/** Wait (bounded) for the session's running turn to end. */
+export async function waitUntilIdle(userId: string, sessionId: string): Promise<void> {
+  const deadline = Date.now() + IDLE_MAX_WAIT_MS;
+  while (Date.now() < deadline && (await isSessionBusy(userId, sessionId))) {
+    await new Promise((resolve) => setTimeout(resolve, IDLE_POLL_MS));
+  }
+}
+
+/** Stop the session's running turn; its assistant message ends as MessageAbortedError. */
+export async function abortAgentSession(userId: string, sessionId: string): Promise<void> {
+  const e = env();
+  const directory = await ensureUserInstance(userId, e);
+  await api(e, "POST", `/session/${encodeURIComponent(sessionId)}/abort`, directory);
+}
+
+/**
+ * Permanently delete the last turn: the last message the user wrote (finmon's
+ * own notes don't count) and everything after it, so the conversation is back
+ * where it was before that send. Returns what the caller needs to finish the
+ * undo: the proposals those messages created (to reject), the user's text and
+ * attachment (to put back in the composer), and how many messages remain.
+ */
+export async function deleteLastTurn(
+  userId: string,
+  sessionId: string,
+): Promise<{ proposalIds: number[]; text: string; attachmentId: number | null; remaining: number }> {
+  const e = env();
+  const directory = await ensureUserInstance(userId, e);
+  const base = `/session/${encodeURIComponent(sessionId)}/message`;
+  const raw = await api<RawMessage[]>(e, "GET", base, directory);
+  const parsed = raw.map(toAgentMessage);
+  // A user message toAgentMessage keeps is one the user wrote (notes → null).
+  const start = parsed.findLastIndex((m) => m?.role === "user");
+  if (start === -1) return { proposalIds: [], text: "", attachmentId: null, remaining: raw.length };
+
+  const doomed = parsed.slice(start);
+  for (const m of raw.slice(start)) {
+    await api(e, "DELETE", `${base}/${encodeURIComponent(m.info.id)}`, directory);
+  }
+  return {
+    proposalIds: doomed
+      .flatMap((m) => m?.tools.map((t) => t.proposalId) ?? [])
+      .filter((id): id is number => id !== null),
+    text: parsed[start]!.text,
+    attachmentId: parsed[start]!.attachmentId,
+    remaining: start,
+  };
 }
 
 /** Tell the agent (without triggering a reply) what the user decided on a proposal. */
