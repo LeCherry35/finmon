@@ -29,6 +29,15 @@ export type AgentResult<T> = { ok: true; data: T } | { ok: false; error: string 
 
 export const STILL_RUNNING = "The assistant is still answering. Wait, or stop it first.";
 
+/** opencode reports a just-started turn as busy only after a moment, so a
+ *  trailing user message younger than this means "starting", not "failed". */
+const TURN_START_GRACE_MS = 10_000;
+
+/** Shown when a turn ended without writing anything: opencode gave up before
+ *  it created the assistant message (an unresolvable model, a crash), so the
+ *  chat would otherwise sit there with no reply and no error at all. */
+export const NO_REPLY = "The assistant didn't reply — the turn failed. Try sending it again.";
+
 export async function guard<T>(fn: () => Promise<T>): Promise<AgentResult<T>> {
   try {
     return { ok: true, data: await fn() };
@@ -63,7 +72,45 @@ export async function chatState(
     );
   }
   const proposals = Object.fromEntries((await getProposals(userId, ids)).map((p) => [p.id, p]));
-  return { chatId, messages, proposals, running, model: effectiveModel(storedModel) };
+  return {
+    chatId,
+    ...withDeadTurn(messages, running),
+    proposals,
+    model: effectiveModel(storedModel),
+  };
+}
+
+/**
+ * A chat whose last visible message is the user's, with nothing running, is a
+ * turn that died without a reply. Within the grace period it is reported as
+ * still running instead, so the page keeps polling rather than declaring a
+ * turn dead that opencode simply hasn't picked up yet.
+ *
+ * Exported for tests.
+ */
+export function withDeadTurn(
+  messages: AgentMessage[],
+  running: boolean,
+  now = Date.now(),
+): { messages: AgentMessage[]; running: boolean } {
+  const last = messages.at(-1);
+  if (running || last?.role !== "user") return { messages, running };
+  if (now - last.createdAt < TURN_START_GRACE_MS) return { messages, running: true };
+  return {
+    messages: [
+      ...messages,
+      {
+        id: `${last.id}-no-reply`,
+        role: "assistant",
+        createdAt: last.createdAt,
+        text: "",
+        tools: [],
+        error: NO_REPLY,
+        attachmentId: null,
+      },
+    ],
+    running: false,
+  };
 }
 
 /** Reject proposals nothing can accept any more (deleted chat or stopped turn). */

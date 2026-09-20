@@ -18,7 +18,7 @@ vi.mock("@/lib/opencode", () => ({
   AgentUnavailableError: class AgentUnavailableError extends Error {},
 }));
 
-import { STILL_RUNNING, chatState, decideWithNote, rejectPendingProposals } from "@/lib/agent-chats";
+import { NO_REPLY, STILL_RUNNING, chatState, decideWithNote, rejectPendingProposals, withDeadTurn } from "@/lib/agent-chats";
 
 beforeEach(() => {
   vi.stubEnv("AGENT_MODEL", "");
@@ -65,6 +65,48 @@ describe("chatState", () => {
   it("links nothing when no proposals are referenced", async () => {
     await chatState("user-1", 5, "ses_1");
     expect(query).not.toHaveBeenCalled();
+  });
+});
+
+describe("withDeadTurn", () => {
+  const userMsg = (createdAt: number) => ({
+    id: "m1",
+    role: "user" as const,
+    text: "hi",
+    error: null,
+    createdAt,
+    attachmentId: null,
+    tools: [],
+  });
+  const now = 1_000_000;
+
+  it("leaves a running turn alone", () => {
+    const messages = [userMsg(now - 60_000)];
+    expect(withDeadTurn(messages, true, now)).toEqual({ messages, running: true });
+  });
+
+  it("keeps a just-sent message running while opencode hasn't reported it busy", () => {
+    const messages = [userMsg(now - 1_000)];
+    expect(withDeadTurn(messages, false, now)).toEqual({ messages, running: true });
+  });
+
+  it("reports an unanswered message as a failed turn once the grace period is up", () => {
+    const { messages, running } = withDeadTurn([userMsg(now - 60_000)], false, now);
+    expect(running).toBe(false);
+    expect(messages).toHaveLength(2);
+    expect(messages[1]).toMatchObject({ id: "m1-no-reply", role: "assistant", text: "", error: NO_REPLY });
+  });
+
+  it("says nothing when the agent did reply", () => {
+    const messages = [
+      userMsg(now - 60_000),
+      { id: "m2", role: "assistant" as const, text: "hello", error: null, createdAt: now - 59_000, attachmentId: null, tools: [] },
+    ];
+    expect(withDeadTurn(messages, false, now)).toEqual({ messages, running: false });
+  });
+
+  it("says nothing about an empty chat", () => {
+    expect(withDeadTurn([], false, now)).toEqual({ messages: [], running: false });
   });
 });
 

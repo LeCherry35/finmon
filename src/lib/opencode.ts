@@ -140,6 +140,9 @@ async function ensureUserInstance(userId: string, e: Env): Promise<string> {
     // A running instance cached the old config — drop it so the new one loads.
     await api(e, "POST", "/instance/dispose", opencodeDir).catch(() => {});
     lockdownVerified.delete(opencodeDir);
+    for (const key of modelVerified.keys()) {
+      if (key.startsWith(`${opencodeDir}|`)) modelVerified.delete(key);
+    }
   }
   return opencodeDir;
 }
@@ -209,6 +212,41 @@ const modelRef = (model: string): ModelRef => {
   const [providerID, ...rest] = model.split("/");
   return { providerID, modelID: rest.join("/") };
 };
+
+/** `directory|model` pairs opencode confirmed it can serve (→ checked-at ms). */
+const modelVerified = new Map<string, number>();
+const MODEL_RECHECK_MS = 10 * 60_000;
+
+/**
+ * Fail fast when opencode can't serve the chosen model. A provider whose API
+ * key is missing from the opencode *process's* environment is never registered
+ * (the per-user config references keys as `{env:…}` placeholders), yet
+ * prompt_async still accepts the turn — which then dies before writing any
+ * assistant message, leaving the chat with no reply and no error. Only
+ * successes are cached, so a fixed environment is picked up on the next send.
+ */
+async function assertModelAvailable(e: Env, directory: string, model: string) {
+  const key = `${directory}|${model}`;
+  const checkedAt = modelVerified.get(key);
+  if (checkedAt && Date.now() - checkedAt < MODEL_RECHECK_MS) return;
+
+  const { providerID, modelID } = modelRef(model);
+  const { providers } = await api<{ providers?: { id: string; models?: Record<string, unknown> }[] }>(
+    e,
+    "GET",
+    "/config/providers",
+    directory,
+  );
+  if (!providers?.find((p) => p.id === providerID)?.models?.[modelID]) {
+    const known = (providers ?? []).map((p) => p.id).join(", ") || "none";
+    console.error(
+      `Model ${model} is not available in opencode (registered providers: ${known}). ` +
+        `Its provider key is probably missing from the opencode process's environment.`,
+    );
+    throw new AgentUnavailableError(`The model "${model}" isn't available right now.`);
+  }
+  modelVerified.set(key, Date.now());
+}
 
 const SESSION_PERMISSIONS = [
   { permission: "*", pattern: "*", action: "deny" },
@@ -343,12 +381,14 @@ export async function sendAgentPrompt(
   const e = env();
   const directory = await ensureUserInstance(userId, e);
   await assertToolLockdown(e, directory);
+  const chosen = mode === "receipt" || !model ? e.model : model;
+  await assertModelAvailable(e, directory, chosen);
   const today = new Date().toISOString().slice(0, 10);
   // prompt_async stores the user message and returns (204) while the turn
   // runs on in opencode — so it doesn't depend on the browser staying around.
   await api(e, "POST", `/session/${encodeURIComponent(sessionId)}/prompt_async`, directory, {
     agent: AGENT_NAME,
-    model: modelRef(mode === "receipt" || !model ? e.model : model),
+    model: modelRef(chosen),
     tools: mode === "receipt" ? RECEIPT_PROMPT_TOOLS : PROMPT_TOOLS,
     system: mode === "receipt" ? `Today is ${today}.\n\n${RECEIPT_SYSTEM_PROMPT}` : `Today is ${today}.`,
     parts: [{ type: "text", text }],

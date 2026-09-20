@@ -33,6 +33,7 @@ and the date-column shapes.
 
 ```bash
 npm run dev              # dev server
+npm run agent            # opencode sidecar for the AI assistant (see DEV.md)
 npm run build            # production build
 npm test                 # run the Vitest suite
 npm run test:cov         # tests with a coverage report

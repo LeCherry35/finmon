@@ -8,6 +8,16 @@ Entry shape: `## <version> — <YYYY-MM-DD> — <headline>`, then **Added / Chan
 
 ---
 
+## 0.15.1 — 2026-09-20 — The assistant no longer fails silently
+
+**Fixed**
+- A turn that died before the agent wrote anything left the chat with no reply and no error — it just sat there. The chat now shows "The assistant didn't reply — the turn failed." on the message that got no answer. A just-sent message is still reported as running for 10s first, so a turn opencode hasn't picked up yet isn't declared dead.
+- Sending on a model opencode can't serve is refused up front ("The model … isn't available right now") instead of starting a turn that dies unanswered. A provider whose API key is missing from the opencode process's environment isn't registered at all, and that was the usual cause.
+- The empty-chat suggestion chips are gone (the list had been emptied, leaving the row unused).
+
+**Changed**
+- `npm run agent` starts the opencode sidecar for local dev with `.env` loaded into its environment (`scripts/agent.mjs`). opencode doesn't read `.env` itself, and the per-user configs reference provider keys as `{env:…}` placeholders, so starting it from a bare shell produced "Authentication Error, No api key passed in." from the model provider. See `DEV.md`.
+
 ## 0.15.0 — 2026-09-19 — Pick the assistant's model per chat
 
 **Added**

@@ -102,21 +102,29 @@ describe("deleteLastTurn", () => {
   });
 });
 
+/** The routes every prompt hits before the turn itself: lockdown + model check. */
+const preflight = {
+  "GET /agent": [
+    {
+      name: "finmon",
+      permission: [
+        { permission: "*", pattern: "*", action: "deny" },
+        { permission: "finmon_*", pattern: "*", action: "allow" },
+      ],
+    },
+  ],
+  "GET /mcp": { finmon: {} },
+  "GET /config/providers": {
+    providers: [
+      { id: "opencode", models: { "big-pickle": {} } },
+      { id: "litellm", models: { "qwen/qwen3-32b": {} } },
+    ],
+  },
+};
+
 describe("sendAgentPrompt", () => {
   it("starts the turn with prompt_async and returns without waiting for it", async () => {
-    serve({
-      "GET /agent": [
-        {
-          name: "finmon",
-          permission: [
-            { permission: "*", pattern: "*", action: "deny" },
-            { permission: "finmon_*", pattern: "*", action: "allow" },
-          ],
-        },
-      ],
-      "GET /mcp": { finmon: {} },
-      "POST /session/ses_1/prompt_async": 204,
-    });
+    serve({ ...preflight, "POST /session/ses_1/prompt_async": 204 });
     vi.stubEnv("AGENT_MODEL", "opencode/big-pickle");
     await sendAgentPrompt("user-1", "ses_1", "hi", "receipt", "openai/gpt-4.1-mini");
     const prompt = calls.find((c) => c.path.endsWith("/prompt_async"));
@@ -131,21 +139,35 @@ describe("sendAgentPrompt", () => {
   });
 
   it("runs a chat turn on the model it's given, splitting provider and model ids", async () => {
-    serve({
-      "GET /agent": [
-        {
-          name: "finmon",
-          permission: [
-            { permission: "*", pattern: "*", action: "deny" },
-            { permission: "finmon_*", pattern: "*", action: "allow" },
-          ],
-        },
-      ],
-      "GET /mcp": { finmon: {} },
-      "POST /session/ses_1/prompt_async": 204,
-    });
+    serve({ ...preflight, "POST /session/ses_1/prompt_async": 204 });
     await sendAgentPrompt("user-1", "ses_1", "hi", "chat", "litellm/qwen/qwen3-32b");
     const prompt = calls.find((c) => c.path.endsWith("/prompt_async"));
     expect(prompt?.body).toMatchObject({ model: { providerID: "litellm", modelID: "qwen/qwen3-32b" } });
+  });
+
+  // A provider whose API key is missing from opencode's environment isn't
+  // registered at all; prompt_async would accept the turn and it would then die
+  // without ever writing an assistant message.
+  it("refuses to start a turn on a model opencode doesn't serve", async () => {
+    serve({ ...preflight, "POST /session/ses_1/prompt_async": 204 });
+    await expect(sendAgentPrompt("user-1", "ses_1", "hi", "chat", "openai/gpt-4.1-mini")).rejects.toThrow(
+      /openai\/gpt-4\.1-mini/,
+    );
+    expect(calls.some((c) => c.path.endsWith("/prompt_async"))).toBe(false);
+  });
+
+  it("refuses a model whose provider is registered without it", async () => {
+    serve({ ...preflight, "POST /session/ses_1/prompt_async": 204 });
+    await expect(sendAgentPrompt("user-1", "ses_1", "hi", "chat", "litellm/other-model")).rejects.toThrow(
+      /litellm\/other-model/,
+    );
+    expect(calls.some((c) => c.path.endsWith("/prompt_async"))).toBe(false);
+  });
+
+  it("checks a model once and reuses the result", async () => {
+    serve({ ...preflight, "POST /session/ses_1/prompt_async": 204 });
+    await sendAgentPrompt("user-1", "ses_1", "hi", "chat", "litellm/qwen/qwen3-32b");
+    await sendAgentPrompt("user-1", "ses_1", "again", "chat", "litellm/qwen/qwen3-32b");
+    expect(calls.filter((c) => c.path === "/config/providers")).toHaveLength(1);
   });
 });

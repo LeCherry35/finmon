@@ -156,18 +156,6 @@ describe("AssistantView", () => {
     expect(sendBtn()).toBeEnabled();
   });
 
-  it("does not touch the typed draft when a suggestion is used", async () => {
-    const user = userEvent.setup();
-    actions.sendAgentMessage.mockResolvedValue({ ok: false, error: "nope" });
-    render(<AssistantView initialChats={[]} />);
-
-    await user.type(input(), "my draft");
-    await user.click(screen.getByRole("button", { name: "Am I over plan anywhere?" }));
-    await screen.findByText("nope");
-    expect(actions.sendAgentMessage).toHaveBeenCalledWith(null, "Am I over plan anywhere?", null, null);
-    expect(input()).toHaveValue("my draft");
-  });
-
   it("re-syncs the cards when a decision fails", async () => {
     const user = userEvent.setup();
     actions.sendAgentMessage.mockResolvedValue({ ok: true, data: chatState({ withProposal: true }) });

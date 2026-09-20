@@ -1,9 +1,10 @@
 {
   "name": "finmon",
-  "version": "0.15.0",
+  "version": "0.15.1",
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "agent": "node --env-file=.env scripts/agent.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",

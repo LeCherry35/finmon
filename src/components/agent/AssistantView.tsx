@@ -22,12 +22,6 @@ import { CameraIcon, SendIcon, SparkIcon, StopIcon, WarnIcon, XIcon } from "@/co
 import { fileToDataUrl } from "@/components/ReceiptUpload";
 import type { AgentModelOption } from "@/lib/agent-models";
 
-const SUGGESTIONS = [
-  "How much did I spend this month?",
-  "Add 12.50 for lunch today",
-  "Am I over plan anywhere?",
-];
-
 /** How often an open chat whose turn is still running is re-checked. */
 const POLL_MS = 2000;
 
@@ -343,19 +337,6 @@ export default function AssistantView({
                 Ask about your spending, plans or transactions. Any change is shown to you for
                 approval first.
               </p>
-              <div className="flex flex-wrap justify-center gap-2">
-                {SUGGESTIONS.map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => send(s, false)}
-                    disabled={busy}
-                    className="rounded-full border border-zinc-200 px-3 py-1.5 text-xs text-zinc-600 hover:border-zinc-400 hover:text-zinc-900 disabled:opacity-50"
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
             </div>
           ) : (
             <>
