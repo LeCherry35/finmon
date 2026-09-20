@@ -16,8 +16,8 @@ vi.mock("next/navigation", () => ({
 import FilterPanel from "@/components/FilterPanel";
 
 const categories: Category[] = [
-  { id: 1, name: "Food", priority: 5 },
-  { id: 2, name: "Rent", priority: 9 },
+  { id: 1, name: "Food", priority: 5, is_default: false },
+  { id: 2, name: "Rent", priority: 9, is_default: false },
 ];
 const availableMonths = ["2026-06", "2026-05", "2026-04"];
 

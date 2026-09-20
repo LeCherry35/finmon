@@ -12,8 +12,8 @@ vi.mock("@/actions/transactions", () => ({ createTransaction }));
 import TransactionCreateSheet from "@/components/TransactionCreateSheet";
 
 const categories: Category[] = [
-  { id: 1, name: "Food", priority: 5 },
-  { id: 2, name: "Rent", priority: 9 },
+  { id: 1, name: "Food", priority: 5, is_default: false },
+  { id: 2, name: "Rent", priority: 9, is_default: false },
 ];
 
 function renderSheet() {

@@ -3,22 +3,33 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-const { updateCategory } = vi.hoisted(() => ({ updateCategory: vi.fn() }));
-vi.mock("@/actions/categories", () => ({ updateCategory }));
+const { updateCategory, setDefaultCategory, deleteCategory } = vi.hoisted(() => ({
+  updateCategory: vi.fn(),
+  setDefaultCategory: vi.fn(),
+  deleteCategory: vi.fn(),
+}));
+vi.mock("@/actions/categories", () => ({ updateCategory, setDefaultCategory, deleteCategory }));
 
 import CategoryRow from "@/components/CategoryRow";
 
-function renderRow(category = { id: 3, name: "Food", priority: 7 }) {
+function renderRow(
+  category = { id: 3, name: "Food", priority: 7, is_default: false },
+  usage: { transactions?: number; plans?: number } = {},
+) {
   return render(
     <table>
       <tbody>
-        <CategoryRow category={category} />
+        <CategoryRow category={category} defaultName="other" {...usage} />
       </tbody>
     </table>,
   );
 }
 
-beforeEach(() => updateCategory.mockReset());
+beforeEach(() => {
+  updateCategory.mockReset();
+  setDefaultCategory.mockReset();
+  deleteCategory.mockReset();
+});
 afterEach(() => vi.clearAllMocks());
 
 describe("CategoryRow", () => {
@@ -91,12 +102,66 @@ describe("CategoryRow", () => {
     expect(screen.getByRole("textbox")).toHaveValue("Food");
   });
 
+  it("marks the default category and hides its destructive controls", () => {
+    renderRow({ id: 3, name: "other", priority: 5, is_default: true });
+    expect(screen.getByText("Default")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Make default" })).not.toBeInTheDocument();
+  });
+
+  it("promotes the row to default with its id", async () => {
+    setDefaultCategory.mockResolvedValue({ ok: true });
+    renderRow();
+    await userEvent.click(screen.getByRole("button", { name: "Make default" }));
+
+    await waitFor(() => expect(setDefaultCategory).toHaveBeenCalledTimes(1));
+    const fd = setDefaultCategory.mock.calls[0][0] as FormData;
+    expect(fd.get("id")).toBe("3");
+  });
+
+  it("surfaces a failed promotion", async () => {
+    setDefaultCategory.mockResolvedValue({ ok: false, error: "Invalid category" });
+    renderRow();
+    await userEvent.click(screen.getByRole("button", { name: "Make default" }));
+    expect(await screen.findByText("Invalid category")).toBeInTheDocument();
+  });
+
+  it("confirms a delete with the impact counts before calling the action", async () => {
+    deleteCategory.mockResolvedValue({ ok: true });
+    renderRow(undefined, { transactions: 4, plans: 2 });
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText(/4 transactions will move to/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/2 monthly plans will be deleted/)).toBeInTheDocument();
+    expect(deleteCategory).not.toHaveBeenCalled();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(deleteCategory).toHaveBeenCalledTimes(1));
+    expect((deleteCategory.mock.calls[0][0] as FormData).get("id")).toBe("3");
+  });
+
+  it("cancels the delete dialog without deleting", async () => {
+    renderRow();
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(deleteCategory).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
   it("keeps within() scoping intact for a second independent row", async () => {
     render(
       <table>
         <tbody>
-          <CategoryRow category={{ id: 1, name: "Rent", priority: 10 }} />
-          <CategoryRow category={{ id: 2, name: "Fun", priority: 2 }} />
+          <CategoryRow
+            category={{ id: 1, name: "Rent", priority: 10, is_default: false }}
+            defaultName="other"
+          />
+          <CategoryRow
+            category={{ id: 2, name: "Fun", priority: 2, is_default: false }}
+            defaultName="other"
+          />
         </tbody>
       </table>,
     );

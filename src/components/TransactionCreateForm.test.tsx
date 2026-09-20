@@ -15,7 +15,7 @@ vi.mock("@/actions/receipt", () => ({ scanReceiptForTransaction }));
 
 import TransactionCreateForm from "@/components/TransactionCreateForm";
 
-const categories: Category[] = [{ id: 1, name: "Food", priority: 5 }];
+const categories: Category[] = [{ id: 1, name: "Food", priority: 5, is_default: false }];
 
 function renderForm() {
   return render(<TransactionCreateForm categories={categories} today="2026-06-01" />);

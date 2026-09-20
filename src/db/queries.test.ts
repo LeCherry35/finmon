@@ -6,6 +6,7 @@ vi.mock("@/db", () => ({ pool: { query } }));
 import {
   getAvailableMonths,
   getCategories,
+  getCategoryUsage,
   getExpendituresByCategory,
   getExpenditureSeries,
   getPlansForMonth,
@@ -30,12 +31,40 @@ beforeEach(() => {
 afterEach(() => vi.clearAllMocks());
 
 describe("getCategories", () => {
-  it("scopes to the user and orders by priority then name", async () => {
+  it("scopes to the user and orders the default first, then priority and name", async () => {
     await getCategories(USER);
     const { sql, params } = lastCall();
     expect(sql).toMatch(/WHERE user_id = \$1/);
-    expect(sql).toMatch(/ORDER BY priority DESC, name ASC/);
+    expect(sql).toMatch(/ORDER BY is_default DESC, priority DESC, name ASC/);
     expect(params).toEqual([USER]);
+  });
+});
+
+describe("getCategoryUsage", () => {
+  it("counts transactions and plans per category for the user", async () => {
+    query.mockResolvedValueOnce({
+      rows: [
+        { category_id: 3, transactions: "4", plans: "2" },
+        { category_id: 5, transactions: "0", plans: "1" },
+      ],
+    });
+
+    const usage = await getCategoryUsage(USER);
+
+    const { sql, params } = lastCall();
+    expect(sql).toMatch(/FROM transactions/);
+    expect(sql).toMatch(/FROM plans/);
+    expect(sql).toMatch(/GROUP BY category_id/);
+    expect(params).toEqual([USER]);
+    // counts arrive as strings from pg's numeric SUM
+    expect(usage).toEqual({
+      3: { transactions: 4, plans: 2 },
+      5: { transactions: 0, plans: 1 },
+    });
+  });
+
+  it("is empty when nothing uses any category", async () => {
+    expect(await getCategoryUsage(USER)).toEqual({});
   });
 });
 

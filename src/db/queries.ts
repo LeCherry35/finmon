@@ -25,6 +25,8 @@ export type ExpenditureSeriesRow = {
   total: number;
 };
 
+export type CategoryUsage = Record<number, { transactions: number; plans: number }>;
+
 export type QueryFilters = {
   months?: string[];
   categoryIds?: number[] | null;
@@ -55,10 +57,38 @@ export function escapeLike(s: string): string {
 
 export async function getCategories(userId: string): Promise<Category[]> {
   const { rows } = await pool.query<Category>(
-    "SELECT * FROM categories WHERE user_id = $1 ORDER BY priority DESC, name ASC",
+    "SELECT * FROM categories WHERE user_id = $1 ORDER BY is_default DESC, priority DESC, name ASC",
     [userId],
   );
   return rows;
+}
+
+/** How much each of the user's categories is carrying, keyed by category id:
+ *  the transactions that would move to the default category if it were
+ *  deleted, and the monthly plans that would go with it. Categories with
+ *  neither are absent. Feeds the delete confirmation on /categories, so the
+ *  dialog can state the impact without a round-trip. */
+export async function getCategoryUsage(userId: string): Promise<CategoryUsage> {
+  const { rows } = await pool.query<{ category_id: number; transactions: string; plans: string }>(
+    `SELECT category_id,
+            SUM(CASE WHEN src = 'tx' THEN 1 ELSE 0 END)   AS transactions,
+            SUM(CASE WHEN src = 'plan' THEN 1 ELSE 0 END) AS plans
+       FROM (
+         SELECT category_id, 'tx' AS src FROM transactions
+          WHERE user_id = $1 AND category_id IS NOT NULL
+         UNION ALL
+         SELECT category_id, 'plan' AS src FROM plans WHERE user_id = $1
+       ) u
+      GROUP BY category_id`,
+    [userId],
+  );
+  const usage: CategoryUsage = {};
+  for (const r of rows)
+    usage[r.category_id] = {
+      transactions: Number(r.transactions),
+      plans: Number(r.plans),
+    };
+  return usage;
 }
 
 /** Whether `categoryId` exists and belongs to `userId`. Used by writes to
@@ -414,7 +444,7 @@ export async function getProduct(userId: string, id: number): Promise<Product | 
 /** One category by id, scoped to `userId`. Null when missing or foreign. */
 export async function getCategory(userId: string, id: number): Promise<Category | null> {
   const { rows } = await pool.query<Category>(
-    "SELECT id, name, priority FROM categories WHERE user_id = $1 AND id = $2",
+    "SELECT id, name, priority, is_default FROM categories WHERE user_id = $1 AND id = $2",
     [userId, id],
   );
   return rows[0] ?? null;

@@ -1,10 +1,22 @@
 "use server";
 
 import { requireUser } from "@/lib/dal";
-import { createCategoryFor, updateCategoryFor } from "@/lib/mutations/categories";
+import {
+  createCategoryFor,
+  deleteCategoryFor,
+  setDefaultCategoryFor,
+  updateCategoryFor,
+} from "@/lib/mutations/categories";
 import type { ActionResult } from "@/actions/transactions";
 
-export type Category = { id: number; name: string; priority: number };
+export type Category = {
+  id: number;
+  name: string;
+  priority: number;
+  /** The user's fallback category: deleted categories' transactions land here,
+   *  and it can't itself be deleted. Exactly one per user. */
+  is_default: boolean;
+};
 
 export type CategoryFormState = { error?: string; successCount: number };
 
@@ -24,4 +36,14 @@ export async function createCategory(
 export async function updateCategory(formData: FormData): Promise<ActionResult> {
   const { id: userId } = await requireUser();
   return updateCategoryFor(userId, formData);
+}
+
+export async function setDefaultCategory(formData: FormData): Promise<ActionResult> {
+  const { id: userId } = await requireUser();
+  return setDefaultCategoryFor(userId, formData);
+}
+
+export async function deleteCategory(formData: FormData): Promise<ActionResult> {
+  const { id: userId } = await requireUser();
+  return deleteCategoryFor(userId, formData);
 }

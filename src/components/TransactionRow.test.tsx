@@ -22,8 +22,8 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
 import TransactionRow from "@/components/TransactionRow";
 
 const categories: Category[] = [
-  { id: 1, name: "Food", priority: 5 },
-  { id: 2, name: "Rent", priority: 9 },
+  { id: 1, name: "Food", priority: 5, is_default: false },
+  { id: 2, name: "Rent", priority: 9, is_default: false },
 ];
 
 const tx: Transaction = {

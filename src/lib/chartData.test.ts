@@ -4,8 +4,8 @@ import type { Category } from "@/actions/categories";
 import type { ExpenditureSeriesRow } from "@/db/queries";
 
 const categories: Category[] = [
-  { id: 1, name: "Food", priority: 0 },
-  { id: 2, name: "Rent", priority: 0 },
+  { id: 1, name: "Food", priority: 0, is_default: false },
+  { id: 2, name: "Rent", priority: 0, is_default: false },
 ];
 
 function row(
@@ -60,8 +60,8 @@ describe("pivotForRecharts", () => {
     // happened to name "Uncategorized" — keyed by name these would merge and
     // one total would silently overwrite the other.
     const clashing: Category[] = [
-      { id: 0, name: "Uncategorized", priority: -1 },
-      { id: 7, name: "Uncategorized", priority: 3 },
+      { id: 0, name: "Uncategorized", priority: -1, is_default: false },
+      { id: 7, name: "Uncategorized", priority: 3, is_default: false },
     ];
     const [point] = pivotForRecharts(["2026-06-01"], clashing, [
       row(0, "2026-06-01", 10),
