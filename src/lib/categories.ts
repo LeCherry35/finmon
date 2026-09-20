@@ -11,3 +11,9 @@
  *  fine.) Keep this module free of server-only imports. */
 export const UNCATEGORIZED_ID = 0;
 export const UNCATEGORIZED_NAME = "Uncategorized";
+
+/** Name of the category each user starts out with as their default — the
+ *  fallback transactions land on when their category is deleted, and what a
+ *  receipt scan resolves its literal "other" answer to. Only the *initial*
+ *  name: the default is renameable, and any category can be made default. */
+export const DEFAULT_CATEGORY_NAME = "other";

@@ -1,13 +1,20 @@
 export const dynamic = "force-dynamic";
 
-import { getCategories } from "@/db/queries";
+import { getCategories, getCategoryUsage } from "@/db/queries";
 import { requireUser } from "@/lib/dal";
 import CategoryRow from "@/components/CategoryRow";
 import CategoryCreateForm from "@/components/CategoryCreateForm";
 
 export default async function CategoriesPage() {
   const { id: userId } = await requireUser();
-  const categories = await getCategories(userId);
+  const [categories, usage] = await Promise.all([
+    getCategories(userId),
+    getCategoryUsage(userId),
+  ]);
+  // getCategories sorts the default first. A user who has never triggered the
+  // lazy create (no categories at all yet) has none — the delete controls are
+  // hidden in that case anyway, since there is nothing to delete.
+  const defaultName = categories.find((c) => c.is_default)?.name ?? "the default category";
 
   return (
     <div className="max-w-xl mx-auto py-6 px-4 space-y-6 md:py-10 md:space-y-8">
@@ -25,7 +32,13 @@ export default async function CategoriesPage() {
         </thead>
         <tbody>
           {categories.map((cat) => (
-            <CategoryRow key={cat.id} category={cat} />
+            <CategoryRow
+              key={cat.id}
+              category={cat}
+              defaultName={defaultName}
+              transactions={usage[cat.id]?.transactions ?? 0}
+              plans={usage[cat.id]?.plans ?? 0}
+            />
           ))}
           {categories.length === 0 && (
             <tr>

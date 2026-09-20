@@ -32,6 +32,7 @@ const UNCATEGORIZED_CATEGORY: Category = {
   id: UNCATEGORIZED_ID,
   name: UNCATEGORIZED_NAME,
   priority: -1,
+  is_default: false,
 };
 
 function readChartId(value: string | string[] | undefined): ChartId {

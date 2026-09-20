@@ -8,6 +8,20 @@ Entry shape: `## <version> — <YYYY-MM-DD> — <headline>`, then **Added / Chan
 
 ---
 
+## 0.16.0 — 2026-09-20 — Delete categories
+
+**Added**
+- Categories can be deleted. The trash button on `/categories` opens a confirmation that spells out the impact first: how many transactions will move to the default category, and how many monthly plans will be deleted.
+- Every user has one **default category** — `other` out of the box. It's where a deleted category's transactions land, and what a receipt scan falls back to when it can't match one of your own categories. Any category can be made the default with the star button; the default shows a "Default" badge and can't be deleted (make another category the default first).
+
+**Changed**
+- The receipt scan's "other" fallback now resolves to your default category instead of always creating a category literally named `other`, so a renamed or moved default is honoured.
+- `/categories` lists the default first.
+- `npm run db:seed:init` also seeds the `other` default category (9 categories now; nothing is seeded against it).
+
+**Migrations**
+- `021_category_default.sql`: `categories.is_default` (`BOOLEAN NOT NULL DEFAULT FALSE`) with a partial unique index (one default per user). Backfill: every user with categories gets an `other` if they lack one, and it becomes their default. Users registering later get theirs created on first use.
+
 ## 0.15.1 — 2026-09-20 — The assistant no longer fails silently
 
 **Fixed**

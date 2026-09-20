@@ -6,6 +6,7 @@ import { userOwnsTransaction } from "@/db/queries";
 import { requireUser } from "@/lib/dal";
 import { isPlausibleScanDate, scanReceipt } from "@/lib/receipt-scan";
 import { insertProducts, recomputeTransactionStatus } from "@/lib/mutations/products";
+import { ensureDefaultCategoryFor } from "@/lib/mutations/categories";
 import { parseImageDataUrl } from "@/lib/image-data-url";
 import { upsertReceipt } from "@/lib/receipts";
 import type { ActionResult } from "@/actions/transactions";
@@ -77,7 +78,8 @@ async function saveReceiptImage(
  * table before the vision call (so the photo survives even when the scan
  * fails). On success the scanned grand total is stored in `receipts.total`,
  * blank transaction fields are filled in from the scan (category — matched
- * against the user's categories or the lazily-created 'other' fallback —
+ * against the user's categories, or their default category when the scan
+ * falls back to "other" —
  * store, and a still-default date), the parsed products are inserted, and the
  * transaction's status is recomputed (it becomes `ready_to_verify` when the
  * product costs sum to the effective amount, else `unverified`; a manually
@@ -132,7 +134,8 @@ export async function scanReceiptForTransaction(
 
     // Fill in transaction fields the user left blank. Category: the scan answers
     // with one of the user's category names or the literal "other" — resolve to
-    // an id, lazily creating the per-user 'other' category for the fallback.
+    // an id, falling back to the user's default category (created on the spot
+    // if they have none).
     // Date: the form always submits a date defaulting to today, so a scanned
     // date only replaces a still-today date (i.e. the user kept the default).
     let scannedCategoryId: number | null = null;
@@ -146,14 +149,7 @@ export async function scanReceiptForTransaction(
         if (match) {
           scannedCategoryId = match.id;
         } else {
-          const { rows } = await pool.query<{ id: number }>(
-            `INSERT INTO categories (name, user_id) VALUES ('other', $1)
-             ON CONFLICT (user_id, name) DO UPDATE SET name = EXCLUDED.name
-             RETURNING id`,
-            [userId],
-          );
-          scannedCategoryId = rows[0].id;
-          revalidatePath("/categories");
+          scannedCategoryId = await ensureDefaultCategoryFor(userId);
         }
       }
     }

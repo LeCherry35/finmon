@@ -343,6 +343,13 @@ async function runInit(pool) {
     );
     const idByName = new Map(catRows.map((r) => [r.name, r.id]));
 
+    // The fallback category every user has (migration 021) — where the
+    // transactions of a deleted category land. Nothing is seeded against it.
+    await client.query(
+      "INSERT INTO categories (name, priority, user_id, is_default) VALUES ('other', 5, $1, TRUE)",
+      [ownerUserId]
+    );
+
     const rng = mulberry32(SEED_INIT);
 
     const today = new Date();
@@ -379,7 +386,7 @@ async function runInit(pool) {
 
     await client.query("COMMIT");
     console.log(
-      `Seeded: ${CATEGORIES.length} categories, ${transactions.length} transactions, ` +
+      `Seeded: ${CATEGORIES.length + 1} categories, ${transactions.length} transactions, ` +
         `${productCount} products, ${planRows.length} plans.`
     );
   } catch (err) {

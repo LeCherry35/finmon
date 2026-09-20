@@ -36,11 +36,15 @@ function scanResult(overrides: Record<string, unknown> = {}) {
 function primeQueries({
   categories = [] as { id: number; name: string }[],
   txCategoryId = null as number | null,
+  /** The user's default category, or null when they have none yet. */
+  defaultId = null as number | null,
   otherId = 99,
 } = {}) {
   query.mockImplementation(async (sql: string) => {
     if (/INSERT INTO receipts/.test(sql)) return { rowCount: 1 };
     if (/SELECT id, name FROM categories/.test(sql)) return { rows: categories };
+    if (/SELECT id FROM categories .* is_default/.test(sql))
+      return { rows: defaultId === null ? [] : [{ id: defaultId }] };
     if (/UPDATE receipts SET total/.test(sql)) return { rowCount: 1 };
     if (/SELECT category_id FROM transactions/.test(sql)) return { rows: [{ category_id: txCategoryId }] };
     if (/INSERT INTO categories/.test(sql)) return { rows: [{ id: otherId }] };
@@ -183,17 +187,37 @@ describe("scanReceiptForTransaction", () => {
     expect(query.mock.calls.some(([s]) => /INSERT INTO categories/.test(s))).toBe(false);
   });
 
-  it("lazily creates the per-user 'other' category when the scan falls back", async () => {
-    primeQueries({ categories: [{ id: 7, name: "groceries" }], txCategoryId: null, otherId: 99 });
+  it("falls back to the user's existing default category", async () => {
+    primeQueries({
+      categories: [{ id: 7, name: "groceries" }],
+      txCategoryId: null,
+      defaultId: 21,
+    });
+    scanReceipt.mockResolvedValueOnce(scanResult({ category: "other" }));
+
+    await scanReceiptForTransaction(formData({ transaction_id: "42", image: IMG }));
+
+    // the default already exists → looked up, never re-created
+    expect(query.mock.calls.some(([s]) => /INSERT INTO categories/.test(s))).toBe(false);
+    expect(writebackCall()![1][0]).toBe(21);
+  });
+
+  it("lazily creates the default 'other' category when the user has none", async () => {
+    primeQueries({
+      categories: [{ id: 7, name: "groceries" }],
+      txCategoryId: null,
+      defaultId: null,
+      otherId: 99,
+    });
     scanReceipt.mockResolvedValueOnce(scanResult({ category: "other" }));
 
     await scanReceiptForTransaction(formData({ transaction_id: "42", image: IMG }));
 
     const upsert = query.mock.calls.find(([s]) => /INSERT INTO categories/.test(s));
     expect(upsert).toBeDefined();
-    expect(upsert![0]).toMatch(/'other'/);
     expect(upsert![0]).toMatch(/ON CONFLICT \(user_id, name\)/);
-    expect(upsert![1]).toEqual([TEST_USER_ID]);
+    expect(upsert![1]).toEqual(["other", TEST_USER_ID]);
+    expect(query.mock.calls.some(([s]) => /SET is_default = TRUE/.test(s))).toBe(true);
     expect(writebackCall()![1][0]).toBe(99);
     expect(revalidatePath).toHaveBeenCalledWith("/categories");
   });
