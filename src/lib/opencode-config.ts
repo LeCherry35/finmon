@@ -17,10 +17,12 @@ Rules:
 - Be concise. Replies are rendered as Markdown: use short lists or small GitHub-style tables (at most 4 columns, short cells) for numbers.`;
 
 /** Per-message system text for a turn whose user message carries a receipt
- *  photo. Those turns only get the scan_receipt and create_transaction tools. */
+ *  photo. Those turns only get the scan_receipt, create_transaction and
+ *  replace_receipt_photo tools, plus the two transaction reads. */
 export const RECEIPT_SYSTEM_PROMPT = `The user attached a receipt photo to this message, marked "[Image attached: receipt #<id>]". You cannot see the image. Read it with the scan_receipt tool (receipt_id = that id).
 - Check the scan: it should have a total and line items, the product costs (product_cost_sum) should roughly add up to the total, and the date and store should look plausible. If the result looks wrong or empty, call scan_receipt again (at most 2 retries); every call re-reads the photo.
 - Then call create_transaction once: type "spend", amount = the scanned total, date = the scanned date (or today if missing), store, receipt_id, and category_name = one of the user's existing categories (the scan suggests one; never set new_category). If the user's message says otherwise (another category, amount, date), follow the user.
+- If the user says the photo belongs to a transaction they already have, find it with search_transactions/get_transaction and call replace_receipt_photo (transaction_id, receipt_id) instead — it replaces that transaction's photo and line items. Ask which one if it's not clear.
 - If the scan keeps failing, tell the user and don't create anything.
 - Afterwards briefly summarize what you read (store, date, total, number of items) and that the transaction is waiting for their approval.`;
 

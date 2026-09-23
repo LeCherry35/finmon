@@ -4,11 +4,10 @@ import { revalidatePath } from "next/cache";
 import { pool } from "@/db";
 import { userOwnsTransaction } from "@/db/queries";
 import { requireUser } from "@/lib/dal";
-import { isPlausibleScanDate, scanReceipt } from "@/lib/receipt-scan";
-import { insertProducts, recomputeTransactionStatus } from "@/lib/mutations/products";
-import { ensureDefaultCategoryFor } from "@/lib/mutations/categories";
+import { scanReceipt } from "@/lib/receipt-scan";
+import { recomputeTransactionStatus } from "@/lib/mutations/products";
 import { parseImageDataUrl } from "@/lib/image-data-url";
-import { upsertReceipt } from "@/lib/receipts";
+import { applyScanToTransaction, deleteTransactionProducts, upsertReceipt } from "@/lib/receipts";
 import type { ActionResult } from "@/actions/transactions";
 
 /**
@@ -38,10 +37,7 @@ export async function startReceiptScan(formData: FormData): Promise<ActionResult
   if (rowCount === 0) return { ok: false, error: "A scan is already in progress" };
 
   // A new scan replaces the previous products.
-  await pool.query(
-    "DELETE FROM products WHERE transaction_id = $1 AND user_id = $2",
-    [transactionId, userId],
-  );
+  await deleteTransactionProducts(userId, transactionId);
 
   revalidatePath("/transactions");
   return { ok: true };
@@ -76,14 +72,8 @@ async function saveReceiptImage(
  *
  * The image arrives as a `data:` URL in `image`. It is stored in the `receipts`
  * table before the vision call (so the photo survives even when the scan
- * fails). On success the scanned grand total is stored in `receipts.total`,
- * blank transaction fields are filled in from the scan (category — matched
- * against the user's categories, or their default category when the scan
- * falls back to "other" —
- * store, and a still-default date), the parsed products are inserted, and the
- * transaction's status is recomputed (it becomes `ready_to_verify` when the
- * product costs sum to the effective amount, else `unverified`; a manually
- * entered `amount` is never overwritten by the scan). On any failure we still
+ * fails); `applyScanToTransaction` (`src/lib/receipts.ts`) then writes the scan
+ * onto the transaction, and the status is recomputed. On any failure we still
  * recompute so the row never stays stuck on `processing`.
  *
  * Once the transaction is known to be valid and owned, the rest of the work —
@@ -117,63 +107,8 @@ export async function scanReceiptForTransaction(
       [userId],
     );
 
-    const { store, total, date, category, products } = await scanReceipt(
-      image,
-      categories.map((c) => c.name),
-    );
-
-    // The receipt's grand total (the final amount paid, discounts already
-    // reflected) lives on the receipt row, never on transactions.amount — a
-    // manually entered amount stays authoritative and the recompute in the
-    // finally compares the two. No-ops when the image store failed (no
-    // receipts row) — that failure is already logged.
-    await pool.query(
-      "UPDATE receipts SET total = $1 WHERE transaction_id = $2 AND user_id = $3",
-      [total, transactionId, userId],
-    );
-
-    // Fill in transaction fields the user left blank. Category: the scan answers
-    // with one of the user's category names or the literal "other" — resolve to
-    // an id, falling back to the user's default category (created on the spot
-    // if they have none).
-    // Date: the form always submits a date defaulting to today, so a scanned
-    // date only replaces a still-today date (i.e. the user kept the default).
-    let scannedCategoryId: number | null = null;
-    if (category !== null) {
-      const { rows: existing } = await pool.query<{ category_id: number | null }>(
-        "SELECT category_id FROM transactions WHERE id = $1 AND user_id = $2",
-        [transactionId, userId],
-      );
-      if (existing[0] && existing[0].category_id === null) {
-        const match = categories.find((c) => c.name === category);
-        if (match) {
-          scannedCategoryId = match.id;
-        } else {
-          scannedCategoryId = await ensureDefaultCategoryFor(userId);
-        }
-      }
-    }
-
-    const today = new Date().toISOString().slice(0, 10);
-    // A date far from today is almost certainly a misread (wrong year, etc.) —
-    // drop it so the transaction keeps its date instead.
-    let scannedDate = date;
-    if (scannedDate !== null && !isPlausibleScanDate(scannedDate, today)) {
-      console.warn(
-        `Ignoring implausible scanned date ${scannedDate} for transaction ${transactionId}`,
-      );
-      scannedDate = null;
-    }
-    await pool.query(
-      `UPDATE transactions
-       SET category_id = COALESCE(category_id, $1),
-           store       = COALESCE(store, $2),
-           date        = CASE WHEN $3::text IS NOT NULL AND date = $4 THEN $3::text ELSE date END
-       WHERE id = $5 AND user_id = $6`,
-      [scannedCategoryId, store, scannedDate, today, transactionId, userId],
-    );
-
-    await insertProducts(userId, transactionId, products);
+    const scan = await scanReceipt(image, categories.map((c) => c.name));
+    await applyScanToTransaction(userId, transactionId, scan, categories);
     return { ok: true };
   } catch (err) {
     // The create flow fires this action fire-and-forget (the client `void`s the

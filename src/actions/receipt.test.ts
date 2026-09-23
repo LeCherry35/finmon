@@ -157,6 +157,7 @@ describe("scanReceiptForTransaction", () => {
       Buffer.from("AAAA", "base64"),
       "image/jpeg",
       null, // a new image invalidates the old total
+      null, // …and its scan
     ]);
   });
 
