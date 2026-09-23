@@ -256,12 +256,16 @@ const SESSION_PERMISSIONS = [
 /** Tool switches sent with every prompt: nothing but finmon tools. */
 const PROMPT_TOOLS = { "*": false, [`${MCP_KEY}_*`]: true };
 
-/** A turn with an attached receipt photo: only scanning and proposing the
- *  transaction. Narrows PROMPT_TOOLS — the session/config lockdown is unchanged. */
+/** A turn with an attached receipt photo: scanning, then proposing either a new
+ *  transaction or the photo onto an existing one (which it must be able to look
+ *  up). Narrows PROMPT_TOOLS — the session/config lockdown is unchanged. */
 const RECEIPT_PROMPT_TOOLS = {
   "*": false,
   [`${MCP_KEY}_scan_receipt`]: true,
   [`${MCP_KEY}_create_transaction`]: true,
+  [`${MCP_KEY}_replace_receipt_photo`]: true,
+  [`${MCP_KEY}_search_transactions`]: true,
+  [`${MCP_KEY}_get_transaction`]: true,
 };
 
 export type PromptMode = "chat" | "receipt";

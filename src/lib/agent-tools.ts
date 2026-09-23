@@ -28,7 +28,14 @@ import { createCategoryFor, updateCategoryFor } from "@/lib/mutations/categories
 import { upsertPlanFor } from "@/lib/mutations/plans";
 import { toImageDataUrl } from "@/lib/image-data-url";
 import { scanReceipt, type ScanResult } from "@/lib/receipt-scan";
-import { upsertReceipt } from "@/lib/receipts";
+import {
+  applyScanToTransaction,
+  deleteTransactionProducts,
+  getStoredReceipt,
+  saveReceiptScan,
+  upsertReceipt,
+  type StoredReceipt,
+} from "@/lib/receipts";
 import type { Transaction } from "@/actions/transactions";
 
 // The complete set of things the finmon agent can do. The MCP route
@@ -162,6 +169,60 @@ async function requireScannedAttachment(userId: string, id: number) {
   return { ...attachment, scan: attachment.scan };
 }
 
+/** The receipt photo stored on one of the user's transactions. */
+async function requireStoredReceipt(userId: string, transactionId: number): Promise<StoredReceipt> {
+  await requireTransaction(userId, transactionId);
+  const receipt = await getStoredReceipt(userId, transactionId);
+  if (!receipt) throw new AgentToolError(`Transaction ${transactionId} has no stored receipt photo`);
+  return receipt;
+}
+
+/** The stored receipt's latest scan — what apply_receipt_scan applies. */
+async function requireScannedReceipt(userId: string, transactionId: number) {
+  const receipt = await requireStoredReceipt(userId, transactionId);
+  if (!receipt.scan)
+    throw new AgentToolError(
+      `The receipt of transaction ${transactionId} hasn't been scanned yet — call scan_receipt first`,
+    );
+  return { ...receipt, scan: receipt.scan };
+}
+
+/** One OpenAI vision call on a receipt photo, with the user's category names. */
+async function readReceipt(userId: string, image: Buffer, contentType: string, label: string) {
+  const categories = await getCategories(userId);
+  try {
+    return await scanReceipt(toImageDataUrl(image, contentType), categories.map((c) => c.name));
+  } catch (err) {
+    console.error(`scan_receipt ${label} failed:`, err instanceof Error ? err.message : err);
+    throw new AgentToolError("Scanning the receipt failed. Try again, or tell the user.");
+  }
+}
+
+/** The scan as the model reads it back. */
+function scanSummary(scan: ScanResult) {
+  return {
+    store: scan.store,
+    total: scan.total,
+    date: scan.date,
+    suggested_category: scan.category,
+    product_cost_sum: round2(scan.products.reduce((sum, p) => sum + (p.cost ?? 0), 0)),
+    products: scan.products.map((p) => ({ name: p.name, cost: p.cost, amount: p.amount, unit: p.unit })),
+  };
+}
+
+/** Replace a transaction's line items with a scan's, then re-derive its status.
+ *  The products modal's re-scan does the same (src/actions/receipt.ts). */
+async function applyScan(userId: string, transactionId: number, scan: ScanResult) {
+  const categories = await getCategories(userId);
+  try {
+    await deleteTransactionProducts(userId, transactionId);
+    await applyScanToTransaction(userId, transactionId, scan, categories);
+  } finally {
+    await recomputeTransactionStatus(userId, transactionId);
+  }
+  return { transaction_id: transactionId, products: scan.products.length, total: scan.total };
+}
+
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
 // ---------------------------------------------------------------------------
@@ -182,6 +243,15 @@ const transactionFields = {
   note: z.string().max(500).nullable().optional(),
   store: z.string().max(200).nullable().optional().describe("Merchant name."),
 };
+
+const scanReceiptInput = z
+  .object({
+    receipt_id: ID.optional().describe("A photo attached in this chat, from its [Image attached: receipt #<id>] marker."),
+    transaction_id: ID.optional().describe("Re-read the receipt photo already stored on this transaction."),
+  })
+  .refine((i) => (i.receipt_id === undefined) !== (i.transaction_id === undefined), {
+    message: "Pass exactly one of receipt_id (a chat photo) or transaction_id (a stored receipt)",
+  });
 
 const createTransactionInput = z.object({
   ...transactionFields,
@@ -308,7 +378,12 @@ export const AGENT_TOOLS: AgentTool[] = [
     description: "One transaction with all product line item details.",
     input: idInput,
     requiresApproval: false,
-    run: (userId, i) => requireTransaction(userId, i.id),
+    run: async (userId, i) => {
+      // receipt_id is a receipts row id — a different id space from
+      // scan_receipt's receipt_id (a chat attachment), so don't hand it over.
+      const { receipt_id, ...tx } = await requireTransaction(userId, i.id);
+      return { ...tx, has_receipt: receipt_id !== null };
+    },
   }),
   tool({
     name: "spend_by_category",
@@ -327,36 +402,34 @@ export const AGENT_TOOLS: AgentTool[] = [
   tool({
     name: "scan_receipt",
     description:
-      "Read a receipt photo the user attached in the chat ([Image attached: receipt #<id>]). Every call re-reads the image, so call again if the result looks wrong; the latest scan is what create_transaction attaches.",
-    input: z.object({ receipt_id: ID }),
+      "Read a receipt photo: receipt_id = one the user attached in this chat ([Image attached: receipt #<id>]), transaction_id = the photo already stored on a transaction. Every call re-reads the image, so call again if the result looks wrong; the latest scan is what create_transaction / apply_receipt_scan uses.",
+    input: scanReceiptInput,
     requiresApproval: false,
     run: async (userId, i) => {
-      const attachment = await requireAttachment(userId, i.receipt_id);
-      const categories = await getCategories(userId);
-      let scan: ScanResult;
-      try {
-        scan = await scanReceipt(
-          toImageDataUrl(attachment.image, attachment.content_type),
-          categories.map((c) => c.name),
+      if (i.transaction_id !== undefined) {
+        const receipt = await requireStoredReceipt(userId, i.transaction_id);
+        const scan = await readReceipt(
+          userId,
+          receipt.image,
+          receipt.content_type,
+          `transaction ${i.transaction_id}`,
         );
-      } catch (err) {
-        console.error(`scan_receipt ${i.receipt_id} failed:`, err instanceof Error ? err.message : err);
-        throw new AgentToolError("Scanning the receipt failed. Try again, or tell the user.");
+        await saveReceiptScan(userId, i.transaction_id, scan);
+        return { transaction_id: i.transaction_id, ...scanSummary(scan) };
       }
+      const attachment = await requireAttachment(userId, i.receipt_id!);
+      const scan = await readReceipt(
+        userId,
+        attachment.image,
+        attachment.content_type,
+        `attachment ${attachment.id}`,
+      );
       await pool.query("UPDATE agent_attachments SET scan = $1 WHERE id = $2 AND user_id = $3", [
         JSON.stringify(scan),
         attachment.id,
         userId,
       ]);
-      return {
-        receipt_id: attachment.id,
-        store: scan.store,
-        total: scan.total,
-        date: scan.date,
-        suggested_category: scan.category,
-        product_cost_sum: round2(scan.products.reduce((sum, p) => sum + (p.cost ?? 0), 0)),
-        products: scan.products.map((p) => ({ name: p.name, cost: p.cost, amount: p.amount, unit: p.unit })),
-      };
+      return { receipt_id: attachment.id, ...scanSummary(scan) };
     },
   }),
 
@@ -419,6 +492,58 @@ export const AGENT_TOOLS: AgentTool[] = [
         await recomputeTransactionStatus(userId, r.id);
       }
       return { transaction_id: r.id };
+    },
+  }),
+  tool({
+    name: "apply_receipt_scan",
+    description:
+      "Propose replacing a transaction's product line items with the ones from the latest scan of its stored receipt. Call scan_receipt with that transaction_id first.",
+    input: z.object({ transaction_id: ID }),
+    requiresApproval: true,
+    describe: async (userId, i) => {
+      const tx = await requireTransaction(userId, i.transaction_id);
+      const { scan } = await requireScannedReceipt(userId, i.transaction_id);
+      const sum = round2(scan.products.reduce((total, p) => total + (p.cost ?? 0), 0));
+      return [
+        `Apply the scanned receipt to transaction ${txLabel(tx)}`,
+        `products: ${tx.products?.length ?? 0} → ${scan.products.length} (costs sum to ${fmt(sum)})`,
+        `scanned total: ${fmt(tx.scanned_total)} → ${fmt(scan.total)}`,
+        ...(tx.category_id === null && scan.category ? [`category: — → ${scan.category}`] : []),
+        ...(tx.store === null && scan.store ? [`store: — → ${scan.store}`] : []),
+      ].join("\n");
+    },
+    run: async (userId, i) => {
+      // Re-read the cached scan: scan_receipt may have refreshed it since.
+      const { scan } = await requireScannedReceipt(userId, i.transaction_id);
+      return applyScan(userId, i.transaction_id, scan);
+    },
+  }),
+  tool({
+    name: "replace_receipt_photo",
+    description:
+      "Propose filing a receipt photo attached in this chat onto an existing transaction: it replaces the transaction's stored photo and its product line items. Call scan_receipt with that receipt_id first.",
+    input: z.object({ transaction_id: ID, receipt_id: ID }),
+    requiresApproval: true,
+    describe: async (userId, i) => {
+      const tx = await requireTransaction(userId, i.transaction_id);
+      const { scan } = await requireScannedAttachment(userId, i.receipt_id);
+      return [
+        `Replace the receipt photo of transaction ${txLabel(tx)}`,
+        `products: ${tx.products?.length ?? 0} → ${scan.products.length}`,
+        `scanned total: ${fmt(tx.scanned_total)} → ${fmt(scan.total)}`,
+      ].join("\n");
+    },
+    run: async (userId, i) => {
+      const attachment = await requireScannedAttachment(userId, i.receipt_id);
+      await requireTransaction(userId, i.transaction_id);
+      await upsertReceipt(
+        userId,
+        i.transaction_id,
+        { bytes: attachment.image, contentType: attachment.content_type },
+        attachment.scan.total,
+        attachment.scan,
+      );
+      return applyScan(userId, i.transaction_id, attachment.scan);
     },
   }),
   tool({

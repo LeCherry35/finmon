@@ -24,11 +24,16 @@ const m = vi.hoisted(() => ({
   insertProducts: vi.fn(),
   recomputeTransactionStatus: vi.fn(),
 }));
-const { query, scanReceipt, upsertReceipt } = vi.hoisted(() => ({
-  query: vi.fn(),
-  scanReceipt: vi.fn(),
-  upsertReceipt: vi.fn(),
-}));
+const { query, scanReceipt, upsertReceipt, getStoredReceipt, saveReceiptScan, applyScanToTransaction, deleteTransactionProducts } =
+  vi.hoisted(() => ({
+    query: vi.fn(),
+    scanReceipt: vi.fn(),
+    upsertReceipt: vi.fn(),
+    getStoredReceipt: vi.fn(),
+    saveReceiptScan: vi.fn(),
+    applyScanToTransaction: vi.fn(),
+    deleteTransactionProducts: vi.fn(),
+  }));
 
 vi.mock("@/db/queries", () => q);
 vi.mock("@/lib/mutations/transactions", () => m);
@@ -37,7 +42,13 @@ vi.mock("@/lib/mutations/categories", () => m);
 vi.mock("@/lib/mutations/plans", () => m);
 vi.mock("@/db", () => ({ pool: { query } }));
 vi.mock("@/lib/receipt-scan", () => ({ scanReceipt }));
-vi.mock("@/lib/receipts", () => ({ upsertReceipt }));
+vi.mock("@/lib/receipts", () => ({
+  upsertReceipt,
+  getStoredReceipt,
+  saveReceiptScan,
+  applyScanToTransaction,
+  deleteTransactionProducts,
+}));
 
 import { AGENT_TOOLS, AgentToolError, getAgentTool, parseToolInput } from "@/lib/agent-tools";
 
@@ -62,7 +73,18 @@ const tx = {
 };
 
 beforeEach(() => {
-  for (const fn of [...Object.values(q), ...Object.values(m), query, scanReceipt, upsertReceipt]) fn.mockReset();
+  for (const fn of [
+    ...Object.values(q),
+    ...Object.values(m),
+    query,
+    scanReceipt,
+    upsertReceipt,
+    getStoredReceipt,
+    saveReceiptScan,
+    applyScanToTransaction,
+    deleteTransactionProducts,
+  ])
+    fn.mockReset();
 });
 
 describe("registry", () => {
@@ -71,10 +93,12 @@ describe("registry", () => {
     expect(approval).toEqual(
       [
         "add_product",
+        "apply_receipt_scan",
         "create_category",
         "create_transaction",
         "delete_product",
         "delete_transaction",
+        "replace_receipt_photo",
         "set_plan",
         "update_category",
         "update_product",
@@ -124,6 +148,17 @@ describe("read tools", () => {
     q.getPlansForMonth.mockResolvedValue([]);
     await run("get_plans", "user-1", { month: "2026-09" });
     expect(q.getPlansForMonth).toHaveBeenCalledWith("user-1", "2026-09");
+  });
+
+  it("get_transaction reports the receipt as a flag, not a receipts id", async () => {
+    q.getTransaction.mockResolvedValue({ ...tx, receipt_id: 7 });
+
+    const out = (await run("get_transaction", "user-1", { id: 9 })) as Record<string, unknown>;
+
+    // receipts.id and scan_receipt's receipt_id (a chat attachment) are
+    // different id spaces — handing one over invites the wrong call.
+    expect(out).not.toHaveProperty("receipt_id");
+    expect(out.has_receipt).toBe(true);
   });
 
   it("get_transaction reports a missing/foreign id as a tool error", async () => {
@@ -307,6 +342,117 @@ describe("receipt tools", () => {
     );
     expect(m.insertProducts).toHaveBeenCalledWith("user-1", 11, scan.products);
     expect(m.recomputeTransactionStatus).toHaveBeenCalledWith("user-1", 11);
+  });
+
+  const storedReceipt = (s: typeof scan | null = null) => ({
+    id: 7,
+    image: Buffer.from("BBBB", "base64"),
+    content_type: "image/png",
+    scan: s,
+  });
+
+  it("scan_receipt re-reads a transaction's stored photo and caches the scan", async () => {
+    q.getTransaction.mockResolvedValue(tx);
+    getStoredReceipt.mockResolvedValue(storedReceipt());
+    q.getCategories.mockResolvedValue([{ id: 3, name: "Food", priority: 5 }]);
+    scanReceipt.mockResolvedValue(scan);
+
+    const out = (await run("scan_receipt", "user-1", { transaction_id: 9 })) as Record<string, unknown>;
+
+    expect(scanReceipt).toHaveBeenCalledWith("data:image/png;base64,BBBB", ["Food"]);
+    expect(saveReceiptScan).toHaveBeenCalledWith("user-1", 9, scan);
+    expect(query).not.toHaveBeenCalled(); // never touches agent_attachments
+    expect(out).toMatchObject({ transaction_id: 9, total: 12.5, product_cost_sum: 12.5 });
+  });
+
+  it("scan_receipt needs exactly one id, and a transaction that has a photo", async () => {
+    expect(() => parseToolInput(tool("scan_receipt"), {})).toThrow(/exactly one/);
+    expect(() => parseToolInput(tool("scan_receipt"), { receipt_id: 4, transaction_id: 9 })).toThrow(
+      /exactly one/,
+    );
+
+    q.getTransaction.mockResolvedValue(tx);
+    getStoredReceipt.mockResolvedValue(null);
+    await expect(run("scan_receipt", "user-1", { transaction_id: 9 })).rejects.toThrow(
+      "Transaction 9 has no stored receipt photo",
+    );
+    expect(scanReceipt).not.toHaveBeenCalled();
+  });
+
+  it("apply_receipt_scan needs a cached scan and summarizes what it replaces", async () => {
+    q.getTransaction.mockResolvedValue(tx);
+    getStoredReceipt.mockResolvedValue(storedReceipt());
+    await expect(describeCall("apply_receipt_scan", "user-1", { transaction_id: 9 })).rejects.toThrow(
+      /call scan_receipt first/,
+    );
+
+    getStoredReceipt.mockResolvedValue(storedReceipt(scan));
+    const summary = await describeCall("apply_receipt_scan", "user-1", { transaction_id: 9 });
+    expect(summary).toContain("products: 0 → 2");
+    expect(summary).toContain("scanned total: — → 12.5");
+  });
+
+  it("apply_receipt_scan replaces the line items with the cached scan on accept", async () => {
+    q.getTransaction.mockResolvedValue(tx);
+    getStoredReceipt.mockResolvedValue(storedReceipt(scan));
+    q.getCategories.mockResolvedValue([{ id: 3, name: "Food", priority: 5 }]);
+
+    expect(await run("apply_receipt_scan", "user-1", { transaction_id: 9 })).toEqual({
+      transaction_id: 9,
+      products: 2,
+      total: 12.5,
+    });
+
+    expect(deleteTransactionProducts).toHaveBeenCalledWith("user-1", 9);
+    expect(applyScanToTransaction).toHaveBeenCalledWith("user-1", 9, scan, [
+      { id: 3, name: "Food", priority: 5 },
+    ]);
+    expect(m.recomputeTransactionStatus).toHaveBeenCalledWith("user-1", 9);
+    expect(scanReceipt).not.toHaveBeenCalled(); // applies the cached scan, never rescans
+  });
+
+  it("apply_receipt_scan still recomputes status when applying fails", async () => {
+    q.getTransaction.mockResolvedValue(tx);
+    getStoredReceipt.mockResolvedValue(storedReceipt(scan));
+    q.getCategories.mockResolvedValue([]);
+    applyScanToTransaction.mockRejectedValue(new Error("db down"));
+
+    await expect(run("apply_receipt_scan", "user-1", { transaction_id: 9 })).rejects.toThrow("db down");
+    expect(m.recomputeTransactionStatus).toHaveBeenCalledWith("user-1", 9);
+  });
+
+  it("replace_receipt_photo files a scanned chat photo onto an existing transaction", async () => {
+    q.getTransaction.mockResolvedValue(tx);
+    q.getCategories.mockResolvedValue([]);
+    query.mockResolvedValue({ rows: [attachment(scan)] });
+
+    const input = { transaction_id: 9, receipt_id: 4 };
+    expect(await describeCall("replace_receipt_photo", "user-1", input)).toContain(
+      "Replace the receipt photo of transaction #9",
+    );
+    expect(await run("replace_receipt_photo", "user-1", input)).toEqual({
+      transaction_id: 9,
+      products: 2,
+      total: 12.5,
+    });
+
+    expect(upsertReceipt).toHaveBeenCalledWith(
+      "user-1",
+      9,
+      { bytes: Buffer.from("AAAA", "base64"), contentType: "image/jpeg" },
+      12.5,
+      scan,
+    );
+    expect(deleteTransactionProducts).toHaveBeenCalledWith("user-1", 9);
+    expect(applyScanToTransaction).toHaveBeenCalledWith("user-1", 9, scan, []);
+  });
+
+  it("replace_receipt_photo refuses an unscanned attachment", async () => {
+    q.getTransaction.mockResolvedValue(tx);
+    query.mockResolvedValue({ rows: [attachment()] });
+    await expect(
+      describeCall("replace_receipt_photo", "user-1", { transaction_id: 9, receipt_id: 4 }),
+    ).rejects.toThrow(/call scan_receipt first/);
   });
 
   it("create_transaction still recomputes status when attaching the receipt fails", async () => {

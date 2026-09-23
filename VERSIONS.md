@@ -8,6 +8,23 @@ Entry shape: `## <version> — <YYYY-MM-DD> — <headline>`, then **Added / Chan
 
 ---
 
+## 0.17.0 — 2026-09-23 — The assistant can re-read a stored receipt
+
+**Added**
+- The assistant can re-scan the receipt photo already stored on a transaction, not just one you attach in the chat: ask it to re-read transaction #N's receipt and it reports what the photo says. Applying the result is a suggestion you Accept — it replaces that transaction's line items and refreshes the scanned total, like the re-scan button in the products modal.
+- A photo you send in the chat can now be filed onto a transaction you already have ("this is the receipt for #N") instead of only creating a new one: it replaces that transaction's photo, line items and scanned total. Photo turns can therefore also look transactions up.
+
+**Changed**
+- `get_transaction` reports `has_receipt` instead of the receipts row id, which the assistant could confuse with a chat photo's id.
+
+**Migrations**
+- `022_receipt_scan.sql`: `receipts.scan JSONB` — the latest scan of the stored photo, so an Accept applies exactly what the assistant read. Cleared whenever the photo is replaced.
+
+## 0.16.1 — 2026-09-23 — Scroll up while the assistant is answering
+
+**Fixed**
+- Scrolling up in an assistant chat while a reply was in progress snapped back to the thinking dots every 2 seconds. The chat now follows new messages only while you're at the bottom; scroll up and it stays put until you scroll back down, send a message, or switch chats.
+
 ## 0.16.0 — 2026-09-20 — Delete categories
 
 **Added**
