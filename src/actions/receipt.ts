@@ -36,7 +36,6 @@ export async function startReceiptScan(formData: FormData): Promise<ActionResult
   );
   if (rowCount === 0) return { ok: false, error: "A scan is already in progress" };
 
-  // A new scan replaces the previous products.
   await deleteTransactionProducts(userId, transactionId);
 
   revalidatePath("/transactions");
@@ -54,8 +53,8 @@ async function saveReceiptImage(
   try {
     const parsed = parseImageDataUrl(imageDataUrl);
     if (!parsed) return;
-    // total = NULL: a new image invalidates whatever the previous scan read —
-    // the follow-up scan fills it back in.
+    // total and scan stay NULL: a new image invalidates whatever the previous
+    // scan read — the follow-up scan fills them back in.
     await upsertReceipt(userId, transactionId, parsed);
   } catch (err) {
     console.error(
