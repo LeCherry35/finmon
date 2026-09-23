@@ -31,7 +31,9 @@ const POLL_MS = 2000;
  * starts the agent's turn (it runs on in opencode even if this page is left),
  * and while the open chat is `running` the page polls it every POLL_MS,
  * showing a typing bubble and a Stop button, until the reply is in. Coming
- * back to a chat mid-turn looks the same.
+ * back to a chat mid-turn looks the same. The conversation follows new content
+ * only while scrolled to the bottom; scrolling up pauses that until the user
+ * scrolls back down, sends, or switches chat.
  *
  * `busy` is plain component state driven by the single-flight `run` helper,
  * deliberately not `useTransition`: server actions and Next's patched
@@ -71,6 +73,8 @@ export default function AssistantView({
   /** The last message this tab sent, so Stop can give its photo back too. */
   const lastSent = useRef<{ text: string; image: string | null } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  /** Whether the conversation follows new content — false once the user scrolls up. */
+  const stickToBottom = useRef(true);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -87,7 +91,7 @@ export default function AssistantView({
 
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el && stickToBottom.current) el.scrollTop = el.scrollHeight;
   }, [chat, pending, error]);
 
   useEffect(() => {
@@ -188,6 +192,7 @@ export default function AssistantView({
       setPhoto(null);
     }
     setError(null);
+    stickToBottom.current = true;
     setPending({ text, photo: !!image });
     lastSent.current = { text, image };
     void run(
@@ -261,6 +266,7 @@ export default function AssistantView({
   function selectChat(id: number | null) {
     if (inFlight.current) return;
     setError(null);
+    stickToBottom.current = true;
     if (id === null) {
       showChat(null);
       inputRef.current?.focus();
@@ -327,7 +333,14 @@ export default function AssistantView({
       </div>
 
       <div className="flex flex-col overflow-hidden rounded-lg border border-zinc-200 h-[calc(100dvh-env(safe-area-inset-bottom,0px)-17.5rem)] md:h-[calc(100dvh-12.5rem)] min-h-80">
-        <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-4 md:px-6 space-y-4">
+        <div
+          ref={scrollRef}
+          onScroll={(e) => {
+            const el = e.currentTarget;
+            stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+          }}
+          className="flex-1 overflow-y-auto px-3 py-4 md:px-6 space-y-4"
+        >
           {empty ? (
             <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
               <span className="flex h-12 w-12 items-center justify-center rounded-full bg-zinc-100 text-zinc-600">

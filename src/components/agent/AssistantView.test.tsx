@@ -244,6 +244,34 @@ describe("AssistantView", () => {
     vi.useRealTimers();
   });
 
+  it("leaves a scrolled-up conversation alone while polling, and follows again at the bottom", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    actions.sendAgentMessage.mockResolvedValue({ ok: true, data: chatState({ running: true }) });
+    // A fresh object per poll, as from the server.
+    actions.loadAgentChat.mockImplementation(async () => ({ ok: true, data: chatState({ running: true }) }));
+    render(<AssistantView initialChats={[]} />);
+
+    await user.type(input(), "hello{Enter}");
+    await screen.findByRole("button", { name: "Stop" });
+    const log = screen.getByText("Here you go").closest(".overflow-y-auto") as HTMLElement;
+    Object.defineProperty(log, "scrollHeight", { configurable: true, value: 1000 });
+    Object.defineProperty(log, "clientHeight", { configurable: true, value: 300 });
+
+    log.scrollTop = 100; // the user scrolls up
+    log.dispatchEvent(new Event("scroll"));
+    await act(async () => vi.advanceTimersByTimeAsync(4000)); // two polls land
+    expect(actions.loadAgentChat).toHaveBeenCalledTimes(2);
+    expect(log.scrollTop).toBe(100);
+
+    log.scrollTop = 700; // back at the bottom: follow again
+    log.dispatchEvent(new Event("scroll"));
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(actions.loadAgentChat).toHaveBeenCalledTimes(3);
+    expect(log.scrollTop).toBe(1000);
+    vi.useRealTimers();
+  });
+
   it("shows the dots when reopening a chat whose turn is still running, and blocks Accept", async () => {
     const user = userEvent.setup();
     actions.loadAgentChat.mockResolvedValue({ ok: true, data: chatState({ withProposal: true, running: true }) });
