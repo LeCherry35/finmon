@@ -8,7 +8,7 @@ vi.mock("@/lib/agent-token", () => ({
   verifyAgentToken: vi.fn(() => null),
 }));
 
-import { attachmentMarker, deleteLastTurn, isSessionBusy, sendAgentPrompt } from "@/lib/opencode";
+import { attachmentMarker, deleteLastTurn, isSessionBusy, promptDate, sendAgentPrompt } from "@/lib/opencode";
 
 type Call = { method: string; path: string; body: unknown };
 let calls: Call[];
@@ -169,5 +169,20 @@ describe("sendAgentPrompt", () => {
     await sendAgentPrompt("user-1", "ses_1", "hi", "chat", "litellm/qwen/qwen3-32b");
     await sendAgentPrompt("user-1", "ses_1", "again", "chat", "litellm/qwen/qwen3-32b");
     expect(calls.filter((c) => c.path === "/config/providers")).toHaveLength(1);
+  });
+});
+
+describe("promptDate", () => {
+  const now = new Date("2026-10-09T23:30:00Z");
+
+  it("uses the browser's date within a day of the server's UTC date", () => {
+    expect(promptDate("2026-10-10", now)).toBe("2026-10-10"); // east of UTC, past midnight
+    expect(promptDate("2026-10-08", now)).toBe("2026-10-08");
+  });
+
+  it("falls back to the UTC date for a missing, malformed or far-off date", () => {
+    expect(promptDate(undefined, now)).toBe("2026-10-09");
+    expect(promptDate("10/10/2026", now)).toBe("2026-10-09");
+    expect(promptDate("2026-10-12", now)).toBe("2026-10-09");
   });
 });

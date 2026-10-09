@@ -8,6 +8,21 @@ Entry shape: `## <version> — <YYYY-MM-DD> — <headline>`, then **Added / Chan
 
 ---
 
+## 0.18.0 — 2026-10-09 — A simpler, sharper assistant toolset
+
+**Added**
+- The assistant asks the database for totals instead of adding numbers itself: one `summarize_transactions` tool sums and counts by category, month, store, income/spend or product, so "how much on fuel in August" or "how much on coffee" is one call. Product totals count only the matching line items, not the whole receipt.
+- Search can sort by amount (the biggest purchase), filter by date range, income/spend, uncategorized and amount, page through results, and match several words at once (spelling variants, store names).
+- A transaction the assistant proposes can include its line items ("milk 2.10 and bread 1.50").
+
+**Changed**
+- Bulk changes are one suggestion: re-categorising many transactions (`update_transactions`) or setting a month's budget (`set_plans`) is a single Accept instead of one per row.
+- The assistant no longer sees or changes transaction status — verifying stays in the app. Deleting categories and the default category stay app-only too.
+- The assistant's "today" is your local date, not the server's UTC date.
+
+**Migrations**
+- `023_retire_agent_tools.sql`: rejects pending suggestions of the removed `verify_transaction`, `update_transaction` and `set_plan` tools, which could no longer be accepted.
+
 ## 0.17.0 — 2026-09-23 — The assistant can re-read a stored receipt
 
 **Added**

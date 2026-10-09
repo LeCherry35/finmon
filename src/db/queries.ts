@@ -348,36 +348,91 @@ export async function getExpenditureSeries(
  *  a higher id means added later, no timestamp column needed. */
 export type TransactionSort = "date" | "added";
 
-export async function getTransactions(
-  userId: string,
-  f: QueryFilters = {},
-  sort: TransactionSort = "date",
-  search?: string,
-): Promise<Transaction[]> {
-  const where: string[] = ["t.user_id = $1"];
-  const params: unknown[] = [userId];
+/** QueryFilters plus the extra filters only the assistant's tools use. */
+export type TransactionFilters = QueryFilters & {
+  dateFrom?: string;
+  dateTo?: string;
+  type?: "income" | "spend";
+  /** Uncategorized rows — alone, or alongside `categoryIds`. */
+  uncategorized?: boolean;
+  /** Bounds on the summed value (a transaction's effective amount, or a product's cost). */
+  amountMin?: number;
+  amountMax?: number;
+};
 
+/** What a transaction counts as: the manual amount, else the scanned receipt total. */
+const EFFECTIVE_AMOUNT = "COALESCE(t.amount, r.total)";
+
+/** Search text → its non-blank terms; a row matches if it matches any of them. */
+function searchTerms(search: string | string[] | undefined): string[] {
+  return (Array.isArray(search) ? search : [search ?? ""]).map((s) => s.trim()).filter(Boolean);
+}
+
+/** `<cols> ILIKE $n` OR-ed over every column, per term, terms OR-ed together. */
+function ilikeAny(terms: string[], columns: (n: string) => string, params: unknown[]): string {
+  return `(${terms
+    .map((term) => {
+      params.push(`%${escapeLike(term)}%`);
+      return columns(`$${params.length}`);
+    })
+    .join(" OR ")})`;
+}
+
+/** A product line item's text fields matching `n`. */
+const productMatches = (n: string) =>
+  `p.name ILIKE ${n} OR p.brand ILIKE ${n} OR p.product_type ILIKE ${n} OR p.description ILIKE ${n}
+   OR EXISTS (SELECT 1 FROM unnest(p.tags) AS tag WHERE tag ILIKE ${n})`;
+
+/** A transaction, its category or any of its line items matching `n` (EXISTS
+ *  keeps one row per transaction however many products match). */
+const transactionMatches = (n: string) =>
+  `t.store ILIKE ${n} OR t.note ILIKE ${n} OR c.name ILIKE ${n}
+   OR EXISTS (SELECT 1 FROM products p
+              WHERE p.user_id = t.user_id AND p.transaction_id = t.id AND (${productMatches(n)}))`;
+
+/** WHERE predicates over `transactions t` (joined to `categories c` and
+ *  `receipts r`) for the user and filters; `value` is what the amount bounds
+ *  apply to. Pushes onto `params`, whose $1 must be the user id. */
+function transactionWhere(f: TransactionFilters, params: unknown[], value = EFFECTIVE_AMOUNT): string[] {
+  const where: string[] = ["t.user_id = $1"];
   const monthFilter = anyArrayFilter("LEFT(t.date, 7)", f.months, "text", params);
   if (monthFilter) where.push(monthFilter);
   const catFilter = anyArrayFilter("t.category_id", f.categoryIds, "int", params);
-  if (catFilter) where.push(catFilter);
-  const term = search?.trim();
-  if (term) {
-    // Free-text search over the transaction, its category and its products.
-    // EXISTS keeps one row per transaction however many products match.
-    params.push(`%${escapeLike(term)}%`);
-    const n = `$${params.length}`;
-    where.push(
-      `(t.store ILIKE ${n} OR t.note ILIKE ${n} OR c.name ILIKE ${n}
-        OR EXISTS (SELECT 1 FROM products p
-                   WHERE p.user_id = t.user_id AND p.transaction_id = t.id
-                     AND (p.name ILIKE ${n} OR p.brand ILIKE ${n} OR p.product_type ILIKE ${n}
-                          OR p.description ILIKE ${n}
-                          OR EXISTS (SELECT 1 FROM unnest(p.tags) AS tag WHERE tag ILIKE ${n}))))`,
-    );
+  if (catFilter && f.uncategorized) where.push(`(${catFilter} OR t.category_id IS NULL)`);
+  else if (catFilter) where.push(catFilter);
+  else if (f.uncategorized) where.push("t.category_id IS NULL");
+  const bound = (op: string, v: unknown) => {
+    params.push(v);
+    where.push(op.replace("?", `$${params.length}`));
+  };
+  if (f.dateFrom) bound("t.date >= ?", f.dateFrom);
+  if (f.dateTo) bound("t.date <= ?", f.dateTo);
+  if (f.type) bound("t.type = ?", f.type);
+  if (f.amountMin != null) bound(`${value} >= ?`, f.amountMin);
+  if (f.amountMax != null) bound(`${value} <= ?`, f.amountMax);
+  return where;
+}
+
+export async function getTransactions(
+  userId: string,
+  f: TransactionFilters = {},
+  // "amount" (largest first) is only used by the assistant's search.
+  sort: TransactionSort | "amount" = "date",
+  search?: string | string[],
+): Promise<Transaction[]> {
+  const params: unknown[] = [userId];
+  const where = transactionWhere(f, params);
+  const terms = searchTerms(search);
+  if (terms.length > 0) {
+    where.push(ilikeAny(terms, transactionMatches, params));
   }
 
-  const orderBy = sort === "added" ? "t.id DESC" : "t.date DESC, t.id DESC";
+  const orderBy =
+    sort === "added"
+      ? "t.id DESC"
+      : sort === "amount"
+        ? `${EFFECTIVE_AMOUNT} DESC NULLS LAST, t.date DESC, t.id DESC`
+        : "t.date DESC, t.id DESC";
 
   // receipts.transaction_id is UNIQUE, so the LEFT JOIN never multiplies rows.
   // categories is a LEFT JOIN too: a transaction may have no category until a
@@ -406,6 +461,60 @@ export async function getTransactions(
     else byTx.set(p.transaction_id, [p]);
   }
   for (const t of rows) t.products = byTx.get(t.id) ?? [];
+  return rows;
+}
+
+export type SummaryGroupBy = "category" | "month" | "store" | "type" | "product" | "none";
+
+export type SummaryRow = { key: string | number; label: string; total: number; count: number };
+
+/** key / label SQL per grouping; labels are aggregates so only the key is grouped. */
+const SUMMARY_GROUPS: Record<SummaryGroupBy, { key: string; label: string }> = {
+  category: { key: "COALESCE(c.id, 0)", label: "MIN(COALESCE(c.name, 'Uncategorized'))" },
+  month: { key: "LEFT(t.date, 7)", label: "MIN(LEFT(t.date, 7))" },
+  store: { key: "COALESCE(LOWER(TRIM(t.store)), '')", label: "COALESCE(MIN(TRIM(t.store)), '(no store)')" },
+  type: { key: "t.type", label: "MIN(t.type)" },
+  product: { key: "LOWER(TRIM(p.name))", label: "MIN(TRIM(p.name))" },
+  none: { key: "'all'", label: "'All'" },
+};
+
+/**
+ * Totals and counts for the assistant, grouped by `groupBy`. `of: "transactions"`
+ * sums each transaction's effective amount and matches `search` like
+ * `getTransactions`; `of: "products"` sums line-item costs and matches `search`
+ * against the line items themselves (so "coffee" counts only the coffee, not the
+ * whole receipt). Largest total first; months in calendar order.
+ */
+export async function summarizeTransactions(
+  userId: string,
+  f: TransactionFilters,
+  search: string | string[] | undefined,
+  groupBy: SummaryGroupBy,
+  of: "transactions" | "products",
+): Promise<SummaryRow[]> {
+  const params: unknown[] = [userId];
+  const products = of === "products";
+  const value = products ? "p.cost" : EFFECTIVE_AMOUNT;
+  const where = transactionWhere(f, params, value);
+  const terms = searchTerms(search);
+  if (terms.length > 0) {
+    where.push(
+      ilikeAny(terms, products ? productMatches : transactionMatches, params),
+    );
+  }
+  const { key, label } = SUMMARY_GROUPS[groupBy];
+  const { rows } = await pool.query<SummaryRow>(
+    `SELECT ${key} AS key, ${label} AS label,
+            COALESCE(SUM(${value}), 0)::float8 AS total, COUNT(*)::INT AS count
+     FROM transactions t
+     ${products ? "JOIN products p ON p.transaction_id = t.id AND p.user_id = t.user_id" : ""}
+     LEFT JOIN categories c ON c.id = t.category_id
+     LEFT JOIN receipts r ON r.transaction_id = t.id
+     WHERE ${where.join(" AND ")}
+     ${groupBy === "none" ? "" : `GROUP BY ${key}`}
+     ORDER BY ${groupBy === "month" ? "key ASC" : "total DESC, label ASC"}`,
+    params,
+  );
   return rows;
 }
 

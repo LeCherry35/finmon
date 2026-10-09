@@ -199,7 +199,13 @@ export default function AssistantView({
       async () => {
         let result: AgentResult<AgentChatState>;
         try {
-          result = await sendAgentMessage(chatId, text, image, image || models.length < 2 ? null : selectedModel);
+          result = await sendAgentMessage(
+            chatId,
+            text,
+            image,
+            image || models.length < 2 ? null : selectedModel,
+            localDate(),
+          );
         } catch (err) {
           // The request itself died (dropped connection). The turn may have
           // started anyway, so pick up whatever landed.
@@ -589,4 +595,10 @@ function AssistantRow({ children }: { children: React.ReactNode }) {
       <div className="min-w-0 max-w-[85%] md:max-w-[75%] space-y-2">{children}</div>
     </div>
   );
+}
+
+/** Today in the browser's timezone (YYYY-MM-DD) — the assistant's "today". */
+function localDate(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }

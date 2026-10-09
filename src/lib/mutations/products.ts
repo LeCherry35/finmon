@@ -96,7 +96,7 @@ function parsePositive(
   return n;
 }
 
-function parseProductFields(formData: FormData): ProductFields | { error: string } {
+export function parseProductFields(formData: FormData): ProductFields | { error: string } {
   const name = str(formData, "name");
   if (!name) return { error: "Name is required" };
 

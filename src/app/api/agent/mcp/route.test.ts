@@ -58,7 +58,7 @@ describe("/api/agent/mcp", () => {
     const tools: { name: string; description: string; inputSchema: Record<string, unknown> }[] =
       body.result.tools;
     expect(tools.map((t) => t.name)).toEqual(
-      expect.arrayContaining(["search_transactions", "create_transaction", "set_plan"]),
+      expect.arrayContaining(["search_transactions", "create_transaction", "set_plans"]),
     );
     const create = tools.find((t) => t.name === "create_transaction")!;
     expect(create.description).toMatch(/Requires the user's approval/);
