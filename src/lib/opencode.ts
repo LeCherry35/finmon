@@ -375,19 +375,29 @@ export async function getAgentMessages(userId: string, sessionId: string): Promi
  *  `receipt` mode (a photo is attached) adds the receipt instructions and
  *  limits the turn to scan_receipt + create_transaction, and always runs on the
  *  default model. `model` (already validated) picks the model for a chat turn. */
+/** The "today" a turn is told: the browser's local date when it's a real date
+ *  within a day of the server's UTC date (any timezone), else the UTC date. */
+export function promptDate(clientToday?: string | null, now = new Date()): string {
+  const utc = now.toISOString().slice(0, 10);
+  if (!clientToday || !/^\d{4}-\d{2}-\d{2}$/.test(clientToday)) return utc;
+  const offset = Math.abs(Date.parse(`${clientToday}T00:00:00Z`) - Date.parse(`${utc}T00:00:00Z`));
+  return offset <= 86_400_000 ? clientToday : utc;
+}
+
 export async function sendAgentPrompt(
   userId: string,
   sessionId: string,
   text: string,
   mode: PromptMode = "chat",
   model?: string,
+  clientToday?: string | null,
 ): Promise<void> {
   const e = env();
   const directory = await ensureUserInstance(userId, e);
   await assertToolLockdown(e, directory);
   const chosen = mode === "receipt" || !model ? e.model : model;
   await assertModelAvailable(e, directory, chosen);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = promptDate(clientToday);
   // prompt_async stores the user message and returns (204) while the turn
   // runs on in opencode — so it doesn't depend on the browser staying around.
   await api(e, "POST", `/session/${encodeURIComponent(sessionId)}/prompt_async`, directory, {

@@ -135,6 +135,8 @@ export async function sendAgentMessage(
   rawText: string,
   image?: string | null,
   model?: string | null,
+  /** The browser's local date (YYYY-MM-DD), checked by promptDate. */
+  today?: string | null,
 ): Promise<AgentResult<AgentChatState>> {
   const { id: userId } = await requireUser();
   const text = validText(rawText, !!image);
@@ -168,7 +170,7 @@ export async function sendAgentMessage(
     }
 
     if (!photo) {
-      await sendAgentPrompt(userId, chat.opencode_session_id, text, "chat", effectiveModel(chosen ?? chat.model));
+      await sendAgentPrompt(userId, chat.opencode_session_id, text, "chat", effectiveModel(chosen ?? chat.model), today);
       if (chosen && chosen !== chat.model) {
         await pool.query("UPDATE agent_chats SET model = $1 WHERE id = $2 AND user_id = $3", [chosen, chat.id, userId]);
         chat = { ...chat, model: chosen };
@@ -181,7 +183,7 @@ export async function sendAgentMessage(
       );
       const marker = attachmentMarker(rows[0].id);
       const prompt = text ? `${text}\n\n${marker}` : marker;
-      await sendAgentPrompt(userId, chat.opencode_session_id, prompt, "receipt");
+      await sendAgentPrompt(userId, chat.opencode_session_id, prompt, "receipt", undefined, today);
     }
     // opencode may not report the session busy for a moment after accepting
     // the prompt — the turn was just started, so it is running.

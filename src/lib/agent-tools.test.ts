@@ -4,7 +4,7 @@ const q = vi.hoisted(() => ({
   getAvailableMonths: vi.fn(),
   getCategories: vi.fn(),
   getCategory: vi.fn(),
-  getExpendituresByCategory: vi.fn(),
+  summarizeTransactions: vi.fn(),
   getPlansForMonth: vi.fn(),
   getProduct: vi.fn(),
   getTransaction: vi.fn(),
@@ -14,7 +14,6 @@ const m = vi.hoisted(() => ({
   createTransactionFor: vi.fn(),
   updateTransactionFor: vi.fn(),
   deleteTransactionFor: vi.fn(),
-  verifyTransactionFor: vi.fn(),
   addProductFor: vi.fn(),
   updateProductFor: vi.fn(),
   deleteProductFor: vi.fn(),
@@ -22,6 +21,7 @@ const m = vi.hoisted(() => ({
   updateCategoryFor: vi.fn(),
   upsertPlanFor: vi.fn(),
   insertProducts: vi.fn(),
+  parseProductFields: vi.fn(),
   recomputeTransactionStatus: vi.fn(),
 }));
 const { query, scanReceipt, upsertReceipt, getStoredReceipt, saveReceiptScan, applyScanToTransaction, deleteTransactionProducts } =
@@ -99,11 +99,10 @@ describe("registry", () => {
         "delete_product",
         "delete_transaction",
         "replace_receipt_photo",
-        "set_plan",
+        "set_plans",
         "update_category",
         "update_product",
-        "update_transaction",
-        "verify_transaction",
+        "update_transactions",
       ].sort(),
     );
     for (const t of AGENT_TOOLS.filter((t) => t.requiresApproval)) expect(t.describe).toBeDefined();
@@ -138,9 +137,9 @@ describe("read tools", () => {
     })) as { total_matches: number; transactions: unknown[] };
     expect(q.getTransactions).toHaveBeenCalledWith(
       "user-1",
-      { months: ["2026-09"], categoryIds: null },
+      expect.objectContaining({ months: ["2026-09"], categoryIds: null }),
       "date",
-      "shop",
+      ["shop"],
     );
     expect(found.total_matches).toBe(2);
     expect(found.transactions).toHaveLength(1);
@@ -150,8 +149,93 @@ describe("read tools", () => {
     expect(q.getPlansForMonth).toHaveBeenCalledWith("user-1", "2026-09");
   });
 
-  it("get_transaction reports the receipt as a flag, not a receipts id", async () => {
-    q.getTransaction.mockResolvedValue({ ...tx, receipt_id: 7 });
+  it("search_transactions passes every filter, pages, and leaves out status and line items", async () => {
+    const product = { id: 1, name: "Milk", cost: 2 };
+    q.getTransactions.mockResolvedValue([1, 2, 3].map((id) => ({ ...tx, id, products: [product] })));
+
+    const out = (await run("search_transactions", "user-1", {
+      date_from: "2026-09-01",
+      date_to: "2026-09-30",
+      type: "spend",
+      uncategorized: true,
+      amount_min: "5",
+      amount_max: 50,
+      query: ["fuel", "Shell"],
+      sort: "amount",
+      limit: 1,
+      offset: 1,
+    })) as { total_matches: number; returned: number; transactions: Record<string, unknown>[] };
+
+    expect(q.getTransactions).toHaveBeenCalledWith(
+      "user-1",
+      {
+        months: undefined,
+        categoryIds: null,
+        dateFrom: "2026-09-01",
+        dateTo: "2026-09-30",
+        type: "spend",
+        uncategorized: true,
+        amountMin: 5,
+        amountMax: 50,
+      },
+      "amount",
+      ["fuel", "Shell"],
+    );
+    expect(out).toMatchObject({ total_matches: 3, returned: 1 });
+    expect(out.transactions[0]).toMatchObject({ id: 2, product_count: 1 });
+    expect(out.transactions[0]).not.toHaveProperty("status");
+    expect(out.transactions[0]).not.toHaveProperty("products");
+
+    const withProducts = (await run("search_transactions", "user-1", { include_products: true })) as {
+      transactions: Record<string, unknown>[];
+    };
+    expect(withProducts.transactions[0].products).toEqual([product]);
+  });
+
+  it("summarize_transactions defaults to spend, rounds, totals and caps the groups", async () => {
+    const rows = Array.from({ length: 101 }, (_, n) => ({ key: n, label: `C${n}`, total: n === 0 ? 1.234 : 1.25, count: 2 }));
+    q.summarizeTransactions.mockResolvedValue(rows);
+
+    const out = (await run("summarize_transactions", "user-1", { group_by: "category", query: "fuel" })) as {
+      total: number;
+      count: number;
+      groups_total: number;
+      groups: unknown[];
+    };
+
+    expect(q.summarizeTransactions).toHaveBeenCalledWith(
+      "user-1",
+      expect.objectContaining({ type: "spend" }),
+      ["fuel"],
+      "category",
+      "transactions",
+    );
+    expect(out).toMatchObject({ count: 202, groups_total: 101 });
+    expect(out.total).toBe(126.23);
+    expect(out.groups[0]).toMatchObject({ total: 1.23 });
+    expect(out.groups).toHaveLength(100);
+  });
+
+  it("summarize_transactions keeps both types when grouping by type, and checks group_by product", async () => {
+    q.summarizeTransactions.mockResolvedValue([]);
+    await run("summarize_transactions", "user-1", { group_by: "type" });
+    expect(q.summarizeTransactions.mock.calls[0][1].type).toBeUndefined();
+
+    await expect(run("summarize_transactions", "user-1", { group_by: "product" })).rejects.toThrow(
+      'group_by "product" needs of: "products"',
+    );
+    await run("summarize_transactions", "user-1", { group_by: "product", of: "products" });
+    expect(q.summarizeTransactions).toHaveBeenLastCalledWith(
+      "user-1",
+      expect.anything(),
+      undefined,
+      "product",
+      "products",
+    );
+  });
+
+  it("get_transaction reports the receipt as a flag, not a receipts id, and no status", async () => {
+    q.getTransaction.mockResolvedValue({ ...tx, receipt_id: 7, user_id: "user-1" });
 
     const out = (await run("get_transaction", "user-1", { id: 9 })) as Record<string, unknown>;
 
@@ -159,6 +243,8 @@ describe("read tools", () => {
     // different id spaces — handing one over invites the wrong call.
     expect(out).not.toHaveProperty("receipt_id");
     expect(out.has_receipt).toBe(true);
+    expect(out).not.toHaveProperty("status");
+    expect(out).not.toHaveProperty("user_id");
   });
 
   it("get_transaction reports a missing/foreign id as a tool error", async () => {
@@ -169,28 +255,58 @@ describe("read tools", () => {
 });
 
 describe("write tools", () => {
-  it("update_transaction describes only the fields that change", async () => {
+  it("update_transactions describes only the fields that change on a single transaction", async () => {
     q.getTransaction.mockResolvedValue(tx);
-    const summary = await describeCall("update_transaction", "user-1", { id: 9, amount: 12.5, store: "Shop" });
+    const summary = await describeCall("update_transactions", "user-1", { ids: [9], amount: 12.5, store: "Shop" });
     expect(summary).toBe("Update transaction #9 spend 10 on 2026-09-01 at Shop (Food)\namount: 10 → 12.5");
   });
 
-  it("update_transaction refuses a no-op or a foreign category", async () => {
+  it("update_transactions refuses a no-op, an unknown category or a missing transaction", async () => {
     q.getTransaction.mockResolvedValue(tx);
-    await expect(describeCall("update_transaction", "user-1", { id: 9, amount: 10 })).rejects.toThrow(
+    await expect(describeCall("update_transactions", "user-1", { ids: [9], amount: 10 })).rejects.toThrow(
       "Nothing would change",
     );
-    q.getCategory.mockResolvedValue(null);
-    q.getCategories.mockResolvedValue([]);
-    await expect(describeCall("update_transaction", "user-1", { id: 9, category_id: 77 })).rejects.toThrow(
-      "Category 77 not found. Existing categories: none yet",
-    );
+    q.getCategories.mockResolvedValue([{ id: 3, name: "Food", priority: 5 }]);
+    await expect(
+      describeCall("update_transactions", "user-1", { ids: [9], category_name: "Groceries" }),
+    ).rejects.toThrow('Category "Groceries" doesn\'t exist. Existing categories: 3: Food');
+
+    q.getTransaction.mockImplementation(async (_u: string, id: number) => (id === 9 ? tx : null));
+    await expect(
+      describeCall("update_transactions", "user-1", { ids: [9, 11, 12], note: "x" }),
+    ).rejects.toThrow("Transactions not found: 11, 12");
   });
 
-  it("update_transaction merges the patch onto the current row when applied", async () => {
-    q.getTransaction.mockResolvedValue(tx);
+  it("update_transactions summarizes a bulk change by category name, skipping rows that match", async () => {
+    q.getTransaction.mockImplementation(async (_u: string, id: number) =>
+      id === 1 ? { ...tx, id, category_id: 4, category_name: "Groceries" } : { ...tx, id },
+    );
+    q.getCategories.mockResolvedValue([
+      { id: 3, name: "Food", priority: 5 },
+      { id: 4, name: "Groceries", priority: 5 },
+    ]);
+    const ids = Array.from({ length: 13 }, (_, n) => n + 1);
+
+    const summary = await describeCall("update_transactions", "user-1", { ids, category_name: "groceries" });
+
+    const lines = summary.split("\n");
+    expect(lines[0]).toBe("Update 12 transactions: category → Groceries");
+    expect(lines[1]).toBe("#2 spend 10 on 2026-09-01 at Shop (Food)");
+    expect(lines).toHaveLength(1 + 10 + 2);
+    expect(lines.at(-2)).toBe("…and 2 more");
+    expect(lines.at(-1)).toBe("(1 already match)");
+  });
+
+  it("update_transactions merges the patch onto each current row when applied", async () => {
+    q.getTransaction.mockImplementation(async (_u: string, id: number) => ({ ...tx, id }));
+    q.getCategories.mockResolvedValue([]);
     m.updateTransactionFor.mockResolvedValue({ ok: true });
-    await run("update_transaction", "user-1", { id: 9, amount: 12.5, note: null });
+
+    expect(await run("update_transactions", "user-1", { ids: [9, 10, 9], amount: 12.5, note: null, category_name: null })).toEqual({
+      updated_transaction_ids: [9, 10],
+    });
+
+    expect(m.updateTransactionFor).toHaveBeenCalledTimes(2);
     const [userId, fd] = m.updateTransactionFor.mock.calls[0];
     expect(userId).toBe("user-1");
     expect(fields(fd)).toEqual({
@@ -200,8 +316,23 @@ describe("write tools", () => {
       date: "2026-09-01",
       note: "",
       store: "Shop",
-      category_id: "3",
+      category_id: "",
     });
+    expect(fields(m.updateTransactionFor.mock.calls[1][1]).id).toBe("10");
+  });
+
+  it("update_transactions writes nothing when a listed transaction is gone, and reports a partial failure", async () => {
+    q.getTransaction.mockImplementation(async (_u: string, id: number) => (id === 9 ? tx : null));
+    await expect(run("update_transactions", "user-1", { ids: [9, 10], note: "x" })).rejects.toThrow(
+      "Transactions not found: 10",
+    );
+    expect(m.updateTransactionFor).not.toHaveBeenCalled();
+
+    q.getTransaction.mockImplementation(async (_u: string, id: number) => ({ ...tx, id }));
+    m.updateTransactionFor.mockResolvedValueOnce({ ok: true }).mockResolvedValueOnce({ ok: false, error: "Bad date" });
+    await expect(run("update_transactions", "user-1", { ids: [9, 10], note: "x" })).rejects.toThrow(
+      "#10: Bad date (1 of 2 already updated)",
+    );
   });
 
   it("surfaces a mutation's validation error so the proposal fails", async () => {
@@ -252,13 +383,113 @@ describe("write tools", () => {
     expect(q.getProduct).toHaveBeenCalledWith("user-1", 4);
   });
 
-  it("set_plan shows the current plan amount in its summary", async () => {
-    q.getCategory.mockResolvedValue({ id: 3, name: "Food", priority: 5 });
-    q.getPlansForMonth.mockResolvedValue([{ category_id: 3, amount: 200 }]);
-    expect(await describeCall("set_plan", "user-1", { category_id: 3, month: "2026-10", amount: 250 })).toBe(
-      'Set 2026-10 plan for "Food": 200 → 250',
+  const categories = [
+    { id: 3, name: "Food", priority: 5 },
+    { id: 4, name: "Transport", priority: 5 },
+  ];
+
+  it("set_plans shows each changed plan, skipping unchanged ones", async () => {
+    q.getCategories.mockResolvedValue(categories);
+    q.getPlansForMonth.mockResolvedValue([
+      { category_id: 3, amount: 200 },
+      { category_id: 4, amount: 50 },
+    ]);
+    const input = {
+      month: "2026-10",
+      plans: [
+        { category_name: "food", amount: 250 },
+        { category_name: "Transport", amount: 50 },
+      ],
+    };
+    expect(await describeCall("set_plans", "user-1", input)).toBe("Set 2026-10 plans\nFood: 200 → 250");
+    expect(q.getPlansForMonth).toHaveBeenCalledWith("user-1", "2026-10", [3, 4]);
+
+    q.getPlansForMonth.mockResolvedValue([{ category_id: 3, amount: 250 }]);
+    await expect(
+      describeCall("set_plans", "user-1", { month: "2026-10", plans: [{ category_name: "Food", amount: 250 }] }),
+    ).rejects.toThrow("Nothing would change");
+  });
+
+  it("set_plans refuses unknown or repeated categories", async () => {
+    q.getCategories.mockResolvedValue(categories);
+    await expect(
+      describeCall("set_plans", "user-1", { month: "2026-10", plans: [{ category_name: "Pets", amount: 1 }] }),
+    ).rejects.toThrow('Unknown categories: "Pets". Existing categories: 3: Food, 4: Transport');
+    await expect(
+      describeCall("set_plans", "user-1", {
+        month: "2026-10",
+        plans: [
+          { category_name: "Food", amount: 1 },
+          { category_name: "FOOD", amount: 2 },
+        ],
+      }),
+    ).rejects.toThrow("Each category may appear only once");
+  });
+
+  it("set_plans upserts every plan when applied", async () => {
+    q.getCategories.mockResolvedValue(categories);
+    m.upsertPlanFor.mockResolvedValue({ ok: true });
+    const input = {
+      month: "2026-10",
+      plans: [
+        { category_name: "Food", amount: 250 },
+        { category_name: "Transport", amount: 0 },
+      ],
+    };
+    expect(await run("set_plans", "user-1", input)).toEqual({ month: "2026-10", plans: 2 });
+    expect(m.upsertPlanFor.mock.calls.map(([u, fd]) => [u, fields(fd)])).toEqual([
+      ["user-1", { category_id: "3", month: "2026-10", amount: "250" }],
+      ["user-1", { category_id: "4", month: "2026-10", amount: "0" }],
+    ]);
+  });
+
+  const milk = { name: "Milk", brand: null, cost: 2.1, product_type: null, tags: [], description: null, price: null, amount: null, unit: null, discount: null };
+  const bread = { ...milk, name: "Bread", cost: 1.5 };
+
+  it("create_transaction with products validates and lists them", async () => {
+    m.parseProductFields.mockImplementation((fd: FormData) =>
+      fd.get("name") === "Milk" ? milk : fd.get("name") === "Eggs" ? { error: "Cost must be positive" } : bread,
     );
-    expect(q.getPlansForMonth).toHaveBeenCalledWith("user-1", "2026-10", [3]);
+    const input = {
+      type: "spend",
+      amount: 3.6,
+      date: "2026-09-17",
+      products: [
+        { name: "Milk", cost: 2.1 },
+        { name: "Bread", cost: 1.5 },
+      ],
+    };
+    expect(await describeCall("create_transaction", "user-1", input)).toContain(
+      "products: Milk 2.1, Bread 1.5 (costs sum to 3.6)",
+    );
+    await expect(
+      describeCall("create_transaction", "user-1", { ...input, products: [{ name: "Milk" }, { name: "Eggs" }] }),
+    ).rejects.toThrow("Product 2: Cost must be positive");
+    await expect(describeCall("create_transaction", "user-1", { ...input, receipt_id: 4 })).rejects.toThrow(
+      "Pass products or receipt_id, not both",
+    );
+  });
+
+  it("create_transaction with products inserts them and recomputes the status", async () => {
+    m.parseProductFields.mockImplementation((fd: FormData) => (fd.get("name") === "Milk" ? milk : bread));
+    m.createTransactionFor.mockResolvedValue({ ok: true, id: 11 });
+    const input = {
+      type: "spend",
+      amount: 3.6,
+      date: "2026-09-17",
+      products: [
+        { name: "Milk", cost: 2.1, tags: ["dairy", "fresh"] },
+        { name: "Bread", cost: 1.5 },
+      ],
+    };
+
+    expect(await run("create_transaction", "user-1", input)).toEqual({ transaction_id: 11 });
+
+    expect(fields(m.createTransactionFor.mock.calls[0][1])).not.toHaveProperty("products");
+    expect(fields(m.parseProductFields.mock.calls[0][0])).toEqual({ name: "Milk", cost: "2.1", tags: "dairy,fresh" });
+    expect(m.insertProducts).toHaveBeenCalledWith("user-1", 11, [milk, bread]);
+    expect(m.recomputeTransactionStatus).toHaveBeenCalledWith("user-1", 11);
+    expect(upsertReceipt).not.toHaveBeenCalled();
   });
 });
 

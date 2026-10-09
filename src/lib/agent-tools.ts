@@ -5,22 +5,23 @@ import {
   getAvailableMonths,
   getCategories,
   getCategory,
-  getExpendituresByCategory,
   getPlansForMonth,
   getProduct,
   getTransaction,
   getTransactions,
+  summarizeTransactions,
+  type TransactionFilters,
 } from "@/db/queries";
 import {
   createTransactionFor,
   deleteTransactionFor,
   updateTransactionFor,
-  verifyTransactionFor,
 } from "@/lib/mutations/transactions";
 import {
   addProductFor,
   deleteProductFor,
   insertProducts,
+  parseProductFields,
   recomputeTransactionStatus,
   updateProductFor,
 } from "@/lib/mutations/products";
@@ -37,6 +38,7 @@ import {
   type StoredReceipt,
 } from "@/lib/receipts";
 import type { Transaction } from "@/actions/transactions";
+import type { ProductFields } from "@/actions/products";
 
 // The complete set of things the finmon agent can do. The MCP route
 // (/api/agent/mcp) exposes exactly these tools and nothing else; opencode is
@@ -111,6 +113,15 @@ async function requireTransaction(userId: string, id: number): Promise<Transacti
   return tx;
 }
 
+/** Every listed transaction (duplicates dropped), or an error naming the missing ones. */
+async function requireTransactions(userId: string, ids: number[]): Promise<Transaction[]> {
+  const unique = [...new Set(ids)];
+  const rows = await Promise.all(unique.map((id) => getTransaction(userId, id)));
+  const missing = unique.filter((_, n) => !rows[n]);
+  if (missing.length > 0) throw new AgentToolError(`Transactions not found: ${missing.join(", ")}`);
+  return rows as Transaction[];
+}
+
 function txLabel(t: Pick<Transaction, "id" | "type" | "amount" | "date" | "store" | "category_name">) {
   return `#${t.id} ${t.type} ${fmt(t.amount)} on ${t.date}${t.store ? ` at ${t.store}` : ""}${
     t.category_name ? ` (${t.category_name})` : ""
@@ -121,10 +132,12 @@ function txLabel(t: Pick<Transaction, "id" | "type" | "amount" | "date" | "store
  *  case-insensitive), so "food" reuses an existing "Food". */
 async function resolveCategoryName(userId: string, name: string) {
   const all = await getCategories(userId);
+  return { category: findCategory(all, name), all };
+}
+
+function findCategory<C extends { name: string }>(all: C[], name: string): C | null {
   const key = name.trim().toLocaleLowerCase();
-  const category =
-    all.find((c) => c.name === name.trim()) ?? all.find((c) => c.name.toLocaleLowerCase() === key) ?? null;
-  return { category, all };
+  return all.find((c) => c.name === name.trim()) ?? all.find((c) => c.name.toLocaleLowerCase() === key) ?? null;
 }
 
 /** "3: Groceries, 5: Transport" — handed to the model when it names a category
@@ -133,8 +146,9 @@ function categoryListText(all: { id: number; name: string }[]): string {
   return all.length ? all.map((c) => `${c.id}: ${c.name}`).join(", ") : "none yet";
 }
 
-/** Keep search results compact for the model's context. */
-function compactTransaction(t: Transaction) {
+/** The transaction fields the model sees — no status, ids of other tables or
+ *  user ids, which are only noise to it. */
+function transactionView(t: Transaction) {
   return {
     id: t.id,
     date: t.date,
@@ -145,7 +159,13 @@ function compactTransaction(t: Transaction) {
     category_name: t.category_name ?? null,
     store: t.store,
     note: t.note,
-    status: t.status,
+  };
+}
+
+/** Keep search results compact for the model's context. */
+function compactTransaction(t: Transaction) {
+  return {
+    ...transactionView(t),
     products: (t.products ?? []).map((p) => ({ id: p.id, name: p.name, cost: p.cost })),
   };
 }
@@ -187,6 +207,18 @@ async function requireScannedReceipt(userId: string, transactionId: number) {
   return { ...receipt, scan: receipt.scan };
 }
 
+/** The tool's line items → validated product fields, by the products modal's rules. */
+function parseProducts(items: Record<string, unknown>[]): ProductFields[] {
+  return items.map((item, n) => {
+    const parsed = parseProductFields(toFormData(item));
+    if ("error" in parsed) throw new AgentToolError(`Product ${n + 1}: ${parsed.error}`);
+    return parsed;
+  });
+}
+
+const costSum = (products: { cost: number | null }[]) =>
+  round2(products.reduce((sum, p) => sum + (p.cost ?? 0), 0));
+
 /** One OpenAI vision call on a receipt photo, with the user's category names. */
 async function readReceipt(userId: string, image: Buffer, contentType: string, label: string) {
   const categories = await getCategories(userId);
@@ -205,7 +237,7 @@ function scanSummary(scan: ScanResult) {
     total: scan.total,
     date: scan.date,
     suggested_category: scan.category,
-    product_cost_sum: round2(scan.products.reduce((sum, p) => sum + (p.cost ?? 0), 0)),
+    product_cost_sum: costSum(scan.products),
     products: scan.products.map((p) => ({ name: p.name, cost: p.cost, amount: p.amount, unit: p.unit })),
   };
 }
@@ -225,15 +257,120 @@ async function applyScan(userId: string, transactionId: number, scan: ScanResult
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
+/** summarize_transactions returns at most this many groups (and groups_total). */
+const MAX_SUMMARY_GROUPS = 100;
+/** Most rows one bulk proposal (update_transactions, set_plans) may touch. */
+const MAX_BULK = 100;
+/** Transactions listed by name on a bulk proposal's card. */
+const SUMMARY_ROWS = 10;
+
+/** A transaction as an update_transactions card compares it: category by name. */
+const shownFields = (t: Transaction) => ({
+  type: t.type,
+  amount: t.amount,
+  date: t.date,
+  note: t.note,
+  store: t.store,
+  category: t.category_name ?? null,
+});
+
+/** update_transactions input → the form fields to merge (`patch`, category by
+ *  id) and the same change as the card shows it (`shown`, category by name). */
+async function transactionPatch(
+  userId: string,
+  { category_name, ...fields }: Omit<In<typeof updateTransactionsInput>, "ids">,
+) {
+  const patch: Record<string, unknown> = Object.fromEntries(
+    Object.entries(fields).filter(([, v]) => v !== undefined),
+  );
+  const shown: Record<string, unknown> = { ...patch };
+  if (category_name === null || category_name?.trim() === "") {
+    patch.category_id = null;
+    shown.category = null;
+  } else if (category_name !== undefined) {
+    const { category, all } = await resolveCategoryName(userId, category_name);
+    if (!category)
+      throw new AgentToolError(
+        `Category "${category_name.trim()}" doesn't exist. Existing categories: ${categoryListText(all)}`,
+      );
+    patch.category_id = category.id;
+    shown.category = category.name;
+  }
+  return { patch, shown };
+}
+
+/** set_plans entries → the user's categories they name; unknown or repeated names fail. */
+async function resolvePlans(userId: string, plans: { category_name: string; amount: number }[]) {
+  const all = await getCategories(userId);
+  const resolved = plans.map((p) => ({ name: p.category_name.trim(), category: findCategory(all, p.category_name), amount: p.amount }));
+  const unknown = resolved.filter((p) => !p.category).map((p) => `"${p.name}"`);
+  if (unknown.length > 0)
+    throw new AgentToolError(`Unknown categories: ${unknown.join(", ")}. Existing categories: ${categoryListText(all)}`);
+  const ids = resolved.map((p) => p.category!.id);
+  if (new Set(ids).size !== ids.length) throw new AgentToolError("Each category may appear only once");
+  return resolved.map((p) => ({ category: p.category!, amount: p.amount }));
+}
+
 // ---------------------------------------------------------------------------
 // Input schemas
 
-const searchTransactionsInput = z.object({
+/** Filters shared by search_transactions and summarize_transactions. */
+const filterFields = {
   months: z.array(MONTH).optional().describe("Only these months (YYYY-MM). Omit for all time."),
+  date_from: DATE.optional().describe("On or after this date."),
+  date_to: DATE.optional().describe("On or before this date."),
   category_ids: z.array(ID).optional().describe("Only these category ids."),
-  query: z.string().max(100).optional().describe("Free text matched against store, note, category and product names/brands/tags."),
-  sort: z.enum(["date", "added"]).optional().describe("date (default) = by transaction date, added = newest entries first."),
+  uncategorized: z.boolean().optional().describe("Only uncategorized rows (or also them, with category_ids)."),
+  type: z.enum(["income", "spend"]).optional(),
+  amount_min: num(z.number().min(0)).optional(),
+  amount_max: num(z.number().min(0)).optional(),
+  query: z
+    .preprocess((v) => (typeof v === "string" ? [v] : v), z.array(z.string().max(100)).max(10))
+    .optional()
+    .describe(
+      "Text matched against store, note, category and product names/brands/types/tags. Several terms match ANY of them — pass spelling variants and synonyms together (e.g. [\"fuel\", \"gas station\", \"Shell\"]).",
+    ),
+};
+
+type FilterInput = { [K in keyof typeof filterFields]?: z.infer<(typeof filterFields)[K]> };
+
+function toFilters(i: FilterInput): TransactionFilters {
+  return {
+    months: i.months,
+    categoryIds: i.category_ids ?? null,
+    dateFrom: i.date_from,
+    dateTo: i.date_to,
+    type: i.type,
+    uncategorized: i.uncategorized,
+    amountMin: i.amount_min,
+    amountMax: i.amount_max,
+  };
+}
+
+const searchTransactionsInput = z.object({
+  ...filterFields,
+  sort: z
+    .enum(["date", "added", "amount"])
+    .optional()
+    .describe("date (default) = newest transaction date first, added = newest entries first, amount = largest first."),
   limit: num(z.number().int().min(1).max(200)).optional().describe("Max rows returned (default 50)."),
+  offset: num(z.number().int().min(0)).optional().describe("Skip this many rows (paging)."),
+  include_products: z
+    .boolean()
+    .optional()
+    .describe("Include each row's line items (id, name, cost). Default false: rows carry product_count only."),
+});
+
+const summarizeInput = z.object({
+  ...filterFields,
+  type: filterFields.type.describe("Default spend. Pass income, or group_by type for both."),
+  group_by: z.enum(["category", "month", "store", "type", "product", "none"]),
+  of: z
+    .enum(["transactions", "products"])
+    .optional()
+    .describe(
+      "transactions (default) sums transaction amounts. products sums line-item costs, and query then matches the line items themselves — use it for a product bought inside bigger receipts (e.g. coffee among groceries). group_by product needs it.",
+    ),
 });
 
 const transactionFields = {
@@ -253,6 +390,19 @@ const scanReceiptInput = z
     message: "Pass exactly one of receipt_id (a chat photo) or transaction_id (a stored receipt)",
   });
 
+const productFields = {
+  name: z.string().min(1).max(200),
+  brand: z.string().max(200).nullable().optional(),
+  cost: MONEY.nullable().optional().describe("Final amount paid for this line, discount already applied."),
+  price: MONEY.nullable().optional().describe("Unit price."),
+  amount: MONEY.nullable().optional().describe("Quantity."),
+  unit: z.string().max(50).nullable().optional(),
+  discount: MONEY.nullable().optional().describe("Money taken off this line (informational; cost already includes it)."),
+  product_type: z.string().max(100).nullable().optional(),
+  tags: z.array(z.string().max(50)).optional(),
+  description: z.string().max(500).nullable().optional(),
+};
+
 const createTransactionInput = z.object({
   ...transactionFields,
   category_name: z
@@ -269,31 +419,28 @@ const createTransactionInput = z.object({
   receipt_id: ID.optional().describe(
     "A scanned chat receipt photo: its image and latest scan's line items are attached to the transaction.",
   ),
+  products: z
+    .array(z.object(productFields))
+    .min(1)
+    .max(50)
+    .optional()
+    .describe("Line items the user listed (not with receipt_id, whose scan brings its own)."),
 });
 
-const updateTransactionInput = z.object({
-  id: ID,
+const updateTransactionsInput = z.object({
+  ids: z.array(ID).min(1).max(MAX_BULK).describe("One or more transactions; all get the same new values."),
   type: transactionFields.type.optional(),
   amount: transactionFields.amount,
   date: DATE.optional(),
   note: transactionFields.note,
   store: transactionFields.store,
-  category_id: ID.nullable().optional().describe("Existing category id. null makes it uncategorized."),
+  category_name: z
+    .string()
+    .max(100)
+    .nullable()
+    .optional()
+    .describe("One of the user's existing categories (case-insensitive). null makes them uncategorized."),
 });
-
-const productFields = {
-  name: z.string().min(1).max(200),
-  brand: z.string().max(200).nullable().optional(),
-  cost: MONEY.nullable().optional().describe("Final amount paid for this line, discount already applied."),
-  price: MONEY.nullable().optional().describe("Unit price."),
-  amount: MONEY.nullable().optional().describe("Quantity."),
-  unit: z.string().max(50).nullable().optional(),
-  discount: MONEY.nullable().optional().describe("Money taken off this line (informational; cost already includes it)."),
-  product_type: z.string().max(100).nullable().optional(),
-  tags: z.array(z.string().max(50)).optional(),
-  description: z.string().max(500).nullable().optional(),
-};
-
 const addProductInput = z.object({ transaction_id: ID, ...productFields });
 const updateProductInput = z.object({
   id: ID,
@@ -311,10 +458,17 @@ const updateCategoryInput = z.object({
   priority: num(z.number().int().min(0).max(10)).optional(),
 });
 
-const upsertPlanInput = z.object({
-  category_id: ID,
+const setPlansInput = z.object({
   month: MONTH,
-  amount: num(z.number().min(0)).describe("Planned spend for the month; 0 is allowed."),
+  plans: z
+    .array(
+      z.object({
+        category_name: z.string().min(1).max(100).describe("One of the user's existing categories."),
+        amount: num(z.number().min(0)).describe("Planned spend for the month; 0 is allowed."),
+      }),
+    )
+    .min(1)
+    .max(MAX_BULK),
 });
 
 const idInput = z.object({ id: ID });
@@ -355,21 +509,21 @@ export const AGENT_TOOLS: AgentTool[] = [
   tool({
     name: "search_transactions",
     description:
-      "Find transactions, newest first, with their product line items. Amount may be null when only a scanned receipt total exists (see scanned_total).",
+      "Find transactions. amount is null when only a scanned receipt total exists — then scanned_total is what it counts as. For totals use summarize_transactions instead of adding rows up.",
     input: searchTransactionsInput,
     requiresApproval: false,
     run: async (userId, i) => {
-      const rows = await getTransactions(
-        userId,
-        { months: i.months, categoryIds: i.category_ids ?? null },
-        i.sort ?? "date",
-        i.query,
-      );
-      const limit = i.limit ?? 50;
+      const rows = await getTransactions(userId, toFilters(i), i.sort ?? "date", i.query);
+      const offset = i.offset ?? 0;
+      const page = rows.slice(offset, offset + (i.limit ?? 50));
       return {
         total_matches: rows.length,
-        returned: Math.min(limit, rows.length),
-        transactions: rows.slice(0, limit).map(compactTransaction),
+        returned: page.length,
+        transactions: page.map((t) =>
+          i.include_products
+            ? compactTransaction(t)
+            : { ...transactionView(t), product_count: t.products?.length ?? 0 },
+        ),
       };
     },
   }),
@@ -381,16 +535,44 @@ export const AGENT_TOOLS: AgentTool[] = [
     run: async (userId, i) => {
       // receipt_id is a receipts row id — a different id space from
       // scan_receipt's receipt_id (a chat attachment), so don't hand it over.
-      const { receipt_id, ...tx } = await requireTransaction(userId, i.id);
-      return { ...tx, has_receipt: receipt_id !== null };
+      const tx = await requireTransaction(userId, i.id);
+      return {
+        ...transactionView(tx),
+        has_receipt: tx.receipt_id != null,
+        products: (tx.products ?? []).map((p) => ({
+          id: p.id,
+          name: p.name,
+          brand: p.brand,
+          cost: p.cost,
+          price: p.price,
+          amount: p.amount,
+          unit: p.unit,
+          discount: p.discount,
+          product_type: p.product_type,
+          tags: p.tags,
+          description: p.description,
+        })),
+      };
     },
   }),
   tool({
-    name: "spend_by_category",
-    description: "Total spend and transaction count per category (Uncategorized = id 0), largest first.",
-    input: z.object({ months: z.array(MONTH).optional().describe("Omit for all time.") }),
+    name: "summarize_transactions",
+    description:
+      "Totals and counts computed by the database — use it for any sum, average or comparison instead of adding numbers yourself. Groups are largest first (months in calendar order); category key 0 = Uncategorized.",
+    input: summarizeInput,
     requiresApproval: false,
-    run: (userId, i) => getExpendituresByCategory(userId, { months: i.months }),
+    run: async (userId, { group_by, of = "transactions", ...i }) => {
+      if (group_by === "product" && of !== "products")
+        throw new AgentToolError('group_by "product" needs of: "products"');
+      const filters = toFilters({ ...i, type: i.type ?? (group_by === "type" ? undefined : "spend") });
+      const rows = await summarizeTransactions(userId, filters, i.query, group_by, of);
+      return {
+        total: round2(rows.reduce((sum, r) => sum + r.total, 0)),
+        count: rows.reduce((sum, r) => sum + r.count, 0),
+        groups_total: rows.length,
+        groups: rows.slice(0, MAX_SUMMARY_GROUPS).map((r) => ({ ...r, total: round2(r.total) })),
+      };
+    },
   }),
   tool({
     name: "get_plans",
@@ -441,6 +623,9 @@ export const AGENT_TOOLS: AgentTool[] = [
     input: createTransactionInput,
     requiresApproval: true,
     describe: async (userId, i) => {
+      if (i.receipt_id && i.products)
+        throw new AgentToolError("Pass products or receipt_id, not both — a receipt brings its own line items");
+      const products = i.products ? parseProducts(i.products) : null;
       const receipt = i.receipt_id ? await requireScannedAttachment(userId, i.receipt_id) : null;
       if (i.amount == null && !i.category_name?.trim() && !receipt)
         throw new AgentToolError("Add an amount or a category");
@@ -465,9 +650,14 @@ export const AGENT_TOOLS: AgentTool[] = [
         ...(receipt
           ? [`receipt: ${receipt.scan.products.length} products, total ${fmt(receipt.scan.total)}`]
           : []),
+        ...(products
+          ? [`products: ${products.map((p) => `${p.name} ${fmt(p.cost)}`).join(", ")} (costs sum to ${fmt(costSum(products))})`]
+          : []),
       ].join("\n");
     },
-    run: async (userId, { new_category: _new, receipt_id, ...i }) => {
+    run: async (userId, { new_category: _new, receipt_id, products: items, ...i }) => {
+      if (receipt_id && items) throw new AgentToolError("Pass products or receipt_id, not both");
+      const products = items ? parseProducts(items) : null;
       // Re-resolve at accept time: use the stored spelling of an existing category.
       if (i.category_name?.trim()) {
         const { category } = await resolveCategoryName(userId, i.category_name);
@@ -478,7 +668,15 @@ export const AGENT_TOOLS: AgentTool[] = [
       // the create form; the row starts 'processing' until the recompute below.
       const fd = toFormData({ ...i, ...(receipt && { has_receipt: "1" }) });
       const r = unwrap(await createTransactionFor(userId, fd));
-      if (!r.ok || !receipt) return { transaction_id: r.ok ? r.id : null };
+      if (!r.ok) return { transaction_id: null };
+      if (products) {
+        try {
+          await insertProducts(userId, r.id, products);
+        } finally {
+          await recomputeTransactionStatus(userId, r.id);
+        }
+      }
+      if (!receipt) return { transaction_id: r.id };
       try {
         await upsertReceipt(
           userId,
@@ -503,7 +701,7 @@ export const AGENT_TOOLS: AgentTool[] = [
     describe: async (userId, i) => {
       const tx = await requireTransaction(userId, i.transaction_id);
       const { scan } = await requireScannedReceipt(userId, i.transaction_id);
-      const sum = round2(scan.products.reduce((total, p) => total + (p.cost ?? 0), 0));
+      const sum = costSum(scan.products);
       return [
         `Apply the scanned receipt to transaction ${txLabel(tx)}`,
         `products: ${tx.products?.length ?? 0} → ${scan.products.length} (costs sum to ${fmt(sum)})`,
@@ -547,35 +745,53 @@ export const AGENT_TOOLS: AgentTool[] = [
     },
   }),
   tool({
-    name: "update_transaction",
-    description: "Propose changing fields of a transaction. Only the fields you pass change.",
-    input: updateTransactionInput,
+    name: "update_transactions",
+    description:
+      "Propose changing one or more transactions in a single approval (e.g. recategorize many at once). Only the fields you pass change, the same way on every listed transaction.",
+    input: updateTransactionsInput,
     requiresApproval: true,
-    describe: async (userId, { id, ...patch }) => {
-      const tx = await requireTransaction(userId, id);
-      if (patch.category_id != null && !(await getCategory(userId, patch.category_id)))
-        throw new AgentToolError(
-          `Category ${patch.category_id} not found. Existing categories: ${categoryListText(await getCategories(userId))}`,
-        );
-      const lines = diffLines(tx, patch);
-      if (lines.length === 0) throw new AgentToolError("Nothing would change");
-      return [`Update transaction ${txLabel(tx)}`, ...lines].join("\n");
+    describe: async (userId, { ids, ...i }) => {
+      const txs = await requireTransactions(userId, ids);
+      const { shown } = await transactionPatch(userId, i);
+      const changed = txs
+        .map((tx) => ({ tx, lines: diffLines(shownFields(tx), shown) }))
+        .filter((c) => c.lines.length > 0);
+      if (changed.length === 0) throw new AgentToolError("Nothing would change");
+      if (txs.length === 1) return [`Update transaction ${txLabel(txs[0])}`, ...changed[0].lines].join("\n");
+      const values = Object.entries(shown)
+        .filter(([, v]) => v !== undefined)
+        .map(([k, v]) => `${k} → ${fmt(v)}`)
+        .join(", ");
+      const unchanged = txs.length - changed.length;
+      return [
+        `Update ${changed.length} transactions: ${values}`,
+        ...changed.slice(0, SUMMARY_ROWS).map((c) => txLabel(c.tx)),
+        ...(changed.length > SUMMARY_ROWS ? [`…and ${changed.length - SUMMARY_ROWS} more`] : []),
+        ...(unchanged > 0 ? [`(${unchanged} already match)`] : []),
+      ].join("\n");
     },
-    run: async (userId, { id, ...patch }) => {
-      // Merge onto the row as it is *now* (it may have changed since proposal).
-      const tx = await requireTransaction(userId, id);
-      const merged = {
-        id,
-        type: tx.type,
-        amount: tx.amount,
-        date: tx.date,
-        note: tx.note,
-        store: tx.store,
-        category_id: tx.category_id,
-        ...Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)),
-      };
-      unwrap(await updateTransactionFor(userId, toFormData(merged)));
-      return { transaction_id: id };
+    run: async (userId, { ids, ...i }) => {
+      // Merge onto the rows as they are *now* (they may have changed since proposal).
+      const txs = await requireTransactions(userId, ids);
+      const { patch } = await transactionPatch(userId, i);
+      for (const [n, tx] of txs.entries()) {
+        const merged = {
+          id: tx.id,
+          type: tx.type,
+          amount: tx.amount,
+          date: tx.date,
+          note: tx.note,
+          store: tx.store,
+          category_id: tx.category_id,
+          ...patch,
+        };
+        const r = await updateTransactionFor(userId, toFormData(merged));
+        if (!r.ok)
+          throw new AgentToolError(
+            n === 0 ? (r.error ?? "Failed") : `#${tx.id}: ${r.error ?? "Failed"} (${n} of ${txs.length} already updated)`,
+          );
+      }
+      return { updated_transaction_ids: txs.map((tx) => tx.id) };
     },
   }),
   tool({
@@ -587,22 +803,6 @@ export const AGENT_TOOLS: AgentTool[] = [
     run: async (userId, i) => {
       unwrap(await deleteTransactionFor(userId, toFormData(i)));
       return { deleted_transaction_id: i.id };
-    },
-  }),
-  tool({
-    name: "verify_transaction",
-    description: "Propose marking a ready_to_verify transaction (product costs match its amount) as verified.",
-    input: idInput,
-    requiresApproval: true,
-    describe: async (userId, i) => {
-      const tx = await requireTransaction(userId, i.id);
-      if (tx.status !== "ready_to_verify")
-        throw new AgentToolError(`Transaction is ${tx.status}, not ready_to_verify`);
-      return `Verify transaction ${txLabel(tx)}`;
-    },
-    run: async (userId, i) => {
-      unwrap(await verifyTransactionFor(userId, toFormData(i)));
-      return { verified_transaction_id: i.id };
     },
   }),
   tool({
@@ -702,19 +902,27 @@ export const AGENT_TOOLS: AgentTool[] = [
     },
   }),
   tool({
-    name: "set_plan",
-    description: "Propose setting the planned spend for a category in a month (replaces any existing plan).",
-    input: upsertPlanInput,
+    name: "set_plans",
+    description:
+      "Propose the planned spend for one or more categories in a month, in a single approval (replaces those categories' existing plans; others are untouched).",
+    input: setPlansInput,
     requiresApproval: true,
     describe: async (userId, i) => {
-      const category = await getCategory(userId, i.category_id);
-      if (!category) throw new AgentToolError(`Category ${i.category_id} not found`);
-      const current = (await getPlansForMonth(userId, i.month, [i.category_id]))[0]?.amount ?? null;
-      return `Set ${i.month} plan for "${category.name}": ${fmt(current)} → ${i.amount}`;
+      const plans = await resolvePlans(userId, i.plans);
+      const current = new Map(
+        (await getPlansForMonth(userId, i.month, plans.map((p) => p.category.id))).map((r) => [r.category_id, r.amount]),
+      );
+      const lines = plans
+        .filter((p) => fmt(current.get(p.category.id)) !== fmt(p.amount))
+        .map((p) => `${p.category.name}: ${fmt(current.get(p.category.id))} → ${p.amount}`);
+      if (lines.length === 0) throw new AgentToolError("Nothing would change");
+      return [`Set ${i.month} plans`, ...lines].join("\n");
     },
     run: async (userId, i) => {
-      unwrap(await upsertPlanFor(userId, toFormData(i)));
-      return { category_id: i.category_id, month: i.month };
+      const plans = await resolvePlans(userId, i.plans);
+      for (const p of plans)
+        unwrap(await upsertPlanFor(userId, toFormData({ category_id: p.category.id, month: i.month, amount: p.amount })));
+      return { month: i.month, plans: plans.length };
     },
   }),
 ];

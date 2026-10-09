@@ -13,6 +13,7 @@ import {
   getPlansSummary,
   getReceiptImage,
   getTransactions,
+  summarizeTransactions,
   userOwnsCategory,
 } from "@/db/queries";
 
@@ -273,6 +274,38 @@ describe("getTransactions", () => {
     expect(sql).toMatch(/unnest\(p\.tags\)/);
   });
 
+  it("matches any of several search terms, dropping blank ones", async () => {
+    await getTransactions(USER, {}, "date", ["fuel", " ", "Shell"]);
+    const { sql, params } = lastCall();
+    expect(params).toEqual([USER, "%fuel%", "%Shell%"]);
+    expect(sql).toMatch(/t\.store ILIKE \$2[\s\S]*\) OR t\.store ILIKE \$3/);
+  });
+
+  it("sorts by effective amount, largest first, when sort is 'amount'", async () => {
+    await getTransactions(USER, {}, "amount");
+    expect(lastCall().sql).toMatch(/ORDER BY COALESCE\(t\.amount, r\.total\) DESC NULLS LAST, t\.date DESC, t\.id DESC/);
+  });
+
+  it("applies the assistant's date, type, uncategorized and amount filters", async () => {
+    await getTransactions(USER, {
+      categoryIds: [3],
+      uncategorized: true,
+      dateFrom: "2026-09-01",
+      dateTo: "2026-09-30",
+      type: "income",
+      amountMin: 5,
+      amountMax: 50,
+    });
+    const { sql, params } = lastCall();
+    expect(sql).toMatch(/\(t\.category_id = ANY\(\$2::int\[\]\) OR t\.category_id IS NULL\)/);
+    expect(sql).toMatch(/t\.date >= \$3 AND t\.date <= \$4 AND t\.type = \$5/);
+    expect(sql).toMatch(/COALESCE\(t\.amount, r\.total\) >= \$6 AND COALESCE\(t\.amount, r\.total\) <= \$7/);
+    expect(params).toEqual([USER, [3], "2026-09-01", "2026-09-30", "income", 5, 50]);
+
+    await getTransactions(USER, { uncategorized: true });
+    expect(lastCall().sql).toMatch(/AND t\.category_id IS NULL/);
+  });
+
   it("escapes LIKE wildcards in the search term", async () => {
     await getTransactions(USER, {}, "date", "50%_off\\");
     expect(lastCall().params).toEqual([USER, "%50\\%\\_off\\\\%"]);
@@ -336,5 +369,39 @@ describe("tenancy", () => {
       expect(sql).toMatch(/user_id = \$1/);
       expect(params[0]).toBe(USER);
     }
+  });
+});
+
+describe("summarizeTransactions", () => {
+  it("sums effective amounts per category with the transaction search", async () => {
+    await summarizeTransactions(USER, { type: "spend", months: ["2026-08"] }, ["fuel"], "category", "transactions");
+    const { sql, params } = lastCall();
+    expect(sql).toMatch(/COALESCE\(c\.id, 0\) AS key, MIN\(COALESCE\(c\.name, 'Uncategorized'\)\) AS label/);
+    expect(sql).toMatch(/SUM\(COALESCE\(t\.amount, r\.total\)\)/);
+    expect(sql).toMatch(/GROUP BY COALESCE\(c\.id, 0\)/);
+    expect(sql).toMatch(/ORDER BY total DESC, label ASC/);
+    expect(sql).not.toMatch(/JOIN products p ON/);
+    expect(sql).toMatch(/EXISTS \(SELECT 1 FROM products p/);
+    expect(params).toEqual([USER, ["2026-08"], "spend", "%fuel%"]);
+  });
+
+  it("sums line-item costs and matches the line items themselves for of: products", async () => {
+    await summarizeTransactions(USER, { amountMin: 1 }, "coffee", "product", "products");
+    const { sql, params } = lastCall();
+    expect(sql).toMatch(/JOIN products p ON p\.transaction_id = t\.id AND p\.user_id = t\.user_id/);
+    expect(sql).toMatch(/SUM\(p\.cost\)/);
+    expect(sql).toMatch(/p\.cost >= \$2/);
+    expect(sql).toMatch(/\(p\.name ILIKE \$3/);
+    expect(sql).not.toMatch(/EXISTS \(SELECT 1 FROM products p/);
+    expect(sql).toMatch(/GROUP BY LOWER\(TRIM\(p\.name\)\)/);
+    expect(params).toEqual([USER, 1, "%coffee%"]);
+  });
+
+  it("orders months by calendar and leaves an ungrouped total ungrouped", async () => {
+    await summarizeTransactions(USER, {}, undefined, "month", "transactions");
+    expect(lastCall().sql).toMatch(/ORDER BY key ASC/);
+
+    await summarizeTransactions(USER, {}, undefined, "none", "transactions");
+    expect(lastCall().sql).not.toMatch(/GROUP BY/);
   });
 });

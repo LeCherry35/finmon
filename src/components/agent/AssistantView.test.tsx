@@ -16,6 +16,9 @@ vi.mock("@/actions/agent", () => actions);
 
 import AssistantView from "@/components/agent/AssistantView";
 
+/** The browser-local date AssistantView sends with each message. */
+const TODAY = expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/);
+
 const proposal = { id: 12, status: "pending", summary: "Delete transaction 3", error: null };
 
 function chatState(
@@ -70,12 +73,12 @@ describe("AssistantView", () => {
 
     await user.type(input(), "hello{Enter}");
     await screen.findByText("Here you go");
-    expect(actions.sendAgentMessage).toHaveBeenCalledWith(null, "hello", null, null);
+    expect(actions.sendAgentMessage).toHaveBeenCalledWith(null, "hello", null, null, TODAY);
 
     await user.type(input(), "again");
     await waitFor(() => expect(sendBtn()).toBeEnabled());
     await user.click(sendBtn());
-    await waitFor(() => expect(actions.sendAgentMessage).toHaveBeenLastCalledWith(7, "again", null, null));
+    await waitFor(() => expect(actions.sendAgentMessage).toHaveBeenLastCalledWith(7, "again", null, null, TODAY));
     expect(replaceState).not.toHaveBeenCalled();
   });
 
@@ -189,6 +192,7 @@ describe("AssistantView", () => {
       "",
       expect.stringMatching(/^data:image\/jpeg;base64,/),
       null,
+      TODAY,
     );
     // The composer is cleared; the pending bubble carries the photo chip.
     expect(screen.queryByRole("img", { name: "Receipt photo" })).not.toBeInTheDocument();
@@ -378,7 +382,7 @@ describe("AssistantView", () => {
       await user.selectOptions(picker(), "litellm/qwen3");
       await user.type(input(), "hello{Enter}");
       await screen.findByText("Here you go");
-      expect(actions.sendAgentMessage).toHaveBeenCalledWith(null, "hello", null, "litellm/qwen3");
+      expect(actions.sendAgentMessage).toHaveBeenCalledWith(null, "hello", null, "litellm/qwen3", TODAY);
       // The chat now runs on it.
       expect(picker()).toHaveValue("litellm/qwen3");
     });

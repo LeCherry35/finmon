@@ -84,7 +84,7 @@ describe("sendAgentMessage", () => {
     expect(oc.createAgentSession).toHaveBeenCalledWith(TEST_USER_ID, "How much did I spend?");
     expect(query.mock.calls[0][0]).toMatch(/INSERT INTO agent_chats/);
     expect(query.mock.calls[0][1]).toEqual([TEST_USER_ID, "ses_new", "How much did I spend?", null]);
-    expect(oc.sendAgentPrompt).toHaveBeenCalledWith(TEST_USER_ID, "ses_new", "How much did I spend?", "chat", DEFAULT);
+    expect(oc.sendAgentPrompt).toHaveBeenCalledWith(TEST_USER_ID, "ses_new", "How much did I spend?", "chat", DEFAULT, undefined);
     // Only starts the turn: it's reported running even before opencode says busy.
     expect(result).toEqual({ ok: true, data: { chatId: 7, messages: [], proposals: {}, running: true, model: DEFAULT } });
   });
@@ -99,7 +99,7 @@ describe("sendAgentMessage", () => {
     expect(result.ok).toBe(true);
     expect(query.mock.calls[1][0]).toMatch(/INSERT INTO agent_attachments/);
     expect(query.mock.calls[1][1]).toEqual([TEST_USER_ID, 5, Buffer.from("AAAA", "base64"), "image/jpeg"]);
-    expect(oc.sendAgentPrompt).toHaveBeenCalledWith(TEST_USER_ID, "ses_1", "[Image attached: receipt #42]", "receipt");
+    expect(oc.sendAgentPrompt).toHaveBeenCalledWith(TEST_USER_ID, "ses_1", "[Image attached: receipt #42]", "receipt", undefined, undefined);
   });
 
   it("keeps the user's text before the marker, and titles an image-only chat", async () => {
@@ -117,6 +117,8 @@ describe("sendAgentMessage", () => {
       "ses_1",
       "category Food\n\n[Image attached: receipt #44]",
       "receipt",
+      undefined,
+      undefined,
     );
   });
 
@@ -168,7 +170,7 @@ describe("sendAgentMessage", () => {
     const result = await sendAgentMessage(null, "hi", null, "openai/gpt-4.1-mini");
 
     expect(query.mock.calls[0][1]).toEqual([TEST_USER_ID, "ses_new", "hi", "openai/gpt-4.1-mini"]);
-    expect(oc.sendAgentPrompt).toHaveBeenCalledWith(TEST_USER_ID, "ses_new", "hi", "chat", "openai/gpt-4.1-mini");
+    expect(oc.sendAgentPrompt).toHaveBeenCalledWith(TEST_USER_ID, "ses_new", "hi", "chat", "openai/gpt-4.1-mini", undefined);
     expect(query.mock.calls.some(([sql]) => /UPDATE agent_chats SET model/.test(sql))).toBe(false);
     expect(result.ok && result.data.model).toBe("openai/gpt-4.1-mini");
   });
@@ -178,7 +180,7 @@ describe("sendAgentMessage", () => {
 
     const result = await sendAgentMessage(5, "hi", null, "openai/gpt-4.1-mini");
 
-    expect(oc.sendAgentPrompt).toHaveBeenCalledWith(TEST_USER_ID, "ses_1", "hi", "chat", "openai/gpt-4.1-mini");
+    expect(oc.sendAgentPrompt).toHaveBeenCalledWith(TEST_USER_ID, "ses_1", "hi", "chat", "openai/gpt-4.1-mini", undefined);
     const update = query.mock.calls.find(([sql]) => /UPDATE agent_chats SET model/.test(sql));
     expect(update?.[1]).toEqual(["openai/gpt-4.1-mini", 5, TEST_USER_ID]);
     expect(result.ok && result.data.model).toBe("openai/gpt-4.1-mini");
@@ -187,11 +189,11 @@ describe("sendAgentMessage", () => {
   it("keeps using the chat's model when none is picked, and the default once it's no longer offered", async () => {
     query.mockResolvedValueOnce({ rows: [{ ...chatRow, model: "openai/gpt-4.1-mini" }] });
     await sendAgentMessage(5, "hi");
-    expect(oc.sendAgentPrompt).toHaveBeenLastCalledWith(TEST_USER_ID, "ses_1", "hi", "chat", "openai/gpt-4.1-mini");
+    expect(oc.sendAgentPrompt).toHaveBeenLastCalledWith(TEST_USER_ID, "ses_1", "hi", "chat", "openai/gpt-4.1-mini", undefined);
 
     query.mockResolvedValueOnce({ rows: [{ ...chatRow, model: "gone/model" }] });
     const result = await sendAgentMessage(5, "hi");
-    expect(oc.sendAgentPrompt).toHaveBeenLastCalledWith(TEST_USER_ID, "ses_1", "hi", "chat", DEFAULT);
+    expect(oc.sendAgentPrompt).toHaveBeenLastCalledWith(TEST_USER_ID, "ses_1", "hi", "chat", DEFAULT, undefined);
     expect(result.ok && result.data.model).toBe(DEFAULT);
     expect(query.mock.calls.some(([sql]) => /UPDATE agent_chats SET model/.test(sql))).toBe(false);
   });
@@ -203,7 +205,7 @@ describe("sendAgentMessage", () => {
 
     const result = await sendAgentMessage(5, "", "data:image/jpeg;base64,AAAA", "openai/gpt-4.1-mini");
 
-    expect(oc.sendAgentPrompt).toHaveBeenCalledWith(TEST_USER_ID, "ses_1", "[Image attached: receipt #42]", "receipt");
+    expect(oc.sendAgentPrompt).toHaveBeenCalledWith(TEST_USER_ID, "ses_1", "[Image attached: receipt #42]", "receipt", undefined, undefined);
     expect(query.mock.calls.some(([sql]) => /UPDATE agent_chats SET model/.test(sql))).toBe(false);
     expect(result.ok && result.data.model).toBe("openai/gpt-4.1-mini");
   });
