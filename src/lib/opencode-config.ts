@@ -49,7 +49,7 @@ function litellmProvider(modelIds: string[], baseURL: string | undefined) {
 
 export function buildOpencodeConfig(
   token: string,
-  e: { mcpUrl: string; model: string; litellmBaseUrl?: string; litellmModels?: string[] },
+  e: { mcpUrl: string; model: string; litellmBaseUrl?: string; litellmModels?: string[]; toolset?: string },
 ) {
   const denyAll = { "*": "deny", [`${MCP_KEY}_*`]: "allow" };
   const prefix = `${LITELLM_PROVIDER}/`;
@@ -95,7 +95,9 @@ export function buildOpencodeConfig(
         url: e.mcpUrl,
         enabled: true,
         oauth: false,
-        headers: { Authorization: `Bearer ${token}` },
+        // The toolset fingerprint is ignored by the MCP route; it only makes a
+        // changed toolset change this config (see TOOLSET_VERSION).
+        headers: { Authorization: `Bearer ${token}`, ...(e.toolset && { "X-Finmon-Toolset": e.toolset }) },
       },
     },
   };

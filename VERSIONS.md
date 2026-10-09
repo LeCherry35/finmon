@@ -8,6 +8,11 @@ Entry shape: `## <version> — <YYYY-MM-DD> — <headline>`, then **Added / Chan
 
 ---
 
+## 0.19.1 — 2026-10-09 — The assistant sees new tools without an opencode restart
+
+**Fixed**
+- After a deploy that changed the assistant's tools, opencode kept the old tool list until it was restarted, so the agent still called `delete_transaction` and got "Unknown tool". Each user's opencode config now carries a fingerprint of the toolset, so a changed toolset reloads their instance on the next message.
+
 ## 0.19.0 — 2026-10-09 — No more suggestion floods
 
 **Added**

@@ -1,6 +1,5 @@
-import { z } from "zod";
 import { verifyAgentToken } from "@/lib/agent-token";
-import { AGENT_TOOLS } from "@/lib/agent-tools";
+import { MCP_TOOL_LIST } from "@/lib/agent-toolset";
 import { callAgentTool } from "@/lib/agent-proposals";
 
 /**
@@ -27,18 +26,6 @@ const rpcError = (id: JsonRpcRequest["id"], code: number, message: string) => ({
   error: { code, message },
 });
 
-const TOOL_LIST = AGENT_TOOLS.map((t) => {
-  const inputSchema = z.toJSONSchema(t.input) as Record<string, unknown>;
-  delete inputSchema.$schema;
-  return {
-    name: t.name,
-    description: t.requiresApproval
-      ? `${t.description} Requires the user's approval: the call only creates a pending proposal.`
-      : t.description,
-    inputSchema,
-    annotations: { readOnlyHint: !t.requiresApproval },
-  };
-});
 
 async function handle(userId: string, msg: JsonRpcRequest) {
   const { id, method, params } = msg;
@@ -61,7 +48,7 @@ async function handle(userId: string, msg: JsonRpcRequest) {
     case "ping":
       return { jsonrpc: "2.0", id, result: {} };
     case "tools/list":
-      return { jsonrpc: "2.0", id, result: { tools: TOOL_LIST } };
+      return { jsonrpc: "2.0", id, result: { tools: MCP_TOOL_LIST } };
     case "tools/call": {
       const p = params as { name?: unknown; arguments?: unknown } | undefined;
       if (typeof p?.name !== "string") return rpcError(id, -32602, "Missing tool name");

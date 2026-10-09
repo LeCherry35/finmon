@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { agentModels } from "@/lib/agent-models";
 import { signAgentToken, verifyAgentToken } from "@/lib/agent-token";
+import { TOOLSET_VERSION } from "@/lib/agent-toolset";
 import { AGENT_NAME, MCP_KEY, RECEIPT_SYSTEM_PROMPT, buildOpencodeConfig } from "@/lib/opencode-config";
 
 // Talks to the opencode sidecar (`opencode serve`) over its HTTP API.
@@ -131,13 +132,13 @@ async function ensureUserInstance(userId: string, e: Env): Promise<string> {
   // Keep a valid token, but still rewrite if anything else changed (e.g.
   // AGENT_MODEL switched provider) so env changes reach existing users.
   const token = stillValid ? current! : signAgentToken(userId, now).token;
-  const next = JSON.stringify(buildOpencodeConfig(token, e), null, 2);
+  const next = JSON.stringify(buildOpencodeConfig(token, { ...e, toolset: TOOLSET_VERSION }), null, 2);
   if (next === raw) return opencodeDir;
 
   await mkdir(localDir, { recursive: true });
   await writeFile(configPath, next, { mode: 0o600 });
   if (raw !== null) {
-    // A running instance cached the old config — drop it so the new one loads.
+    // A running instance cached the old config (and tool list) — drop it so the new one loads.
     await api(e, "POST", "/instance/dispose", opencodeDir).catch(() => {});
     lockdownVerified.delete(opencodeDir);
     for (const key of modelVerified.keys()) {

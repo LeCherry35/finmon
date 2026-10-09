@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -6,6 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/agent-token", () => ({
   signAgentToken: vi.fn(() => ({ token: "tok" })),
   verifyAgentToken: vi.fn(() => null),
+}));
+const toolset = vi.hoisted(() => ({ version: "v1" }));
+vi.mock("@/lib/agent-toolset", () => ({
+  get TOOLSET_VERSION() {
+    return toolset.version;
+  },
 }));
 
 import { attachmentMarker, deleteLastTurn, isSessionBusy, promptDate, sendAgentPrompt } from "@/lib/opencode";
@@ -162,6 +168,25 @@ describe("sendAgentPrompt", () => {
       /litellm\/other-model/,
     );
     expect(calls.some((c) => c.path.endsWith("/prompt_async"))).toBe(false);
+  });
+
+  it("reloads the user's opencode instance when the toolset changes", async () => {
+    serve({ ...preflight, "POST /session/ses_1/prompt_async": 204, "POST /instance/dispose": true });
+    const root = process.env.AGENT_WORKSPACE_ROOT!;
+    const header = () => {
+      const [dir] = readdirSync(root);
+      return JSON.parse(readFileSync(path.join(root, dir, "opencode.json"), "utf8")).mcp.finmon.headers["X-Finmon-Toolset"];
+    };
+
+    toolset.version = "v1";
+    await sendAgentPrompt("user-1", "ses_1", "hi", "chat", "litellm/qwen/qwen3-32b");
+    expect(header()).toBe("v1");
+    expect(calls.some((c) => c.path === "/instance/dispose")).toBe(false);
+
+    toolset.version = "v2";
+    await sendAgentPrompt("user-1", "ses_1", "again", "chat", "litellm/qwen/qwen3-32b");
+    expect(header()).toBe("v2");
+    expect(calls.some((c) => c.path === "/instance/dispose")).toBe(true);
   });
 
   it("checks a model once and reuses the result", async () => {
