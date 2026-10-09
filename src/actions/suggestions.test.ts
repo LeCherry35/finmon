@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { decideWithNote, countPendingProposals, revalidatePath } = vi.hoisted(() => ({
+const { decideWithNote, decideAllPending, countPendingProposals, revalidatePath } = vi.hoisted(() => ({
   decideWithNote: vi.fn(),
+  decideAllPending: vi.fn(),
   countPendingProposals: vi.fn(),
   revalidatePath: vi.fn(),
 }));
@@ -12,12 +13,20 @@ vi.mock("@/lib/agent-proposals", () => ({ countPendingProposals }));
 vi.mock("@/lib/agent-chats", async () => ({
   ...(await vi.importActual<typeof import("@/lib/agent-chats")>("@/lib/agent-chats")),
   decideWithNote,
+  decideAllPending,
 }));
 
-import { acceptSuggestion, countPendingSuggestions, rejectSuggestion } from "@/actions/suggestions";
+import {
+  acceptAllSuggestions,
+  acceptSuggestion,
+  countPendingSuggestions,
+  rejectAllSuggestions,
+  rejectSuggestion,
+} from "@/actions/suggestions";
 
 beforeEach(() => {
   decideWithNote.mockReset();
+  decideAllPending.mockReset();
   countPendingProposals.mockReset();
   revalidatePath.mockReset();
 });
@@ -54,5 +63,23 @@ describe("suggestions actions", () => {
     decideWithNote.mockRejectedValue(new Error("db down"));
     vi.spyOn(console, "error").mockImplementation(() => {});
     expect(await acceptSuggestion(12)).toEqual({ ok: false, error: "Something went wrong with the assistant." });
+  });
+});
+
+describe("accept / reject all", () => {
+  it.each([
+    [acceptAllSuggestions, "accept"],
+    [rejectAllSuggestions, "reject"],
+  ] as const)("decides every pending suggestion as the signed-in user (%#)", async (action, decision) => {
+    decideAllPending.mockResolvedValue({ ok: true, data: [{ id: 4 }] });
+    expect(await action()).toEqual({ ok: true, data: [{ id: 4 }] });
+    expect(decideAllPending).toHaveBeenCalledWith("user-1", decision);
+    expect(revalidatePath).toHaveBeenCalledWith("/suggestions");
+  });
+
+  it("passes a refusal through without revalidating", async () => {
+    decideAllPending.mockResolvedValue({ ok: false, error: "busy" });
+    expect(await rejectAllSuggestions()).toEqual({ ok: false, error: "busy" });
+    expect(revalidatePath).not.toHaveBeenCalled();
   });
 });

@@ -48,25 +48,20 @@ export async function callAgentTool(
       return { ok: true, data: await tool.run(userId, input as never) };
     }
 
-    if ((await countPendingProposals(userId)) >= MAX_PENDING_PROPOSALS) {
+    const summary = tool.describe ? await tool.describe(userId, input as never) : tool.name;
+    const chatId = await runningChatId(userId);
+    const id = await insertProposal(userId, tool.name, input, summary, chatId);
+    if (id === null) {
       return {
         ok: false,
         error: `There are already ${MAX_PENDING_PROPOSALS} changes waiting for the user's approval. Ask them to accept or reject those first.`,
       };
     }
-
-    const summary = tool.describe ? await tool.describe(userId, input as never) : tool.name;
-    const chatId = await runningChatId(userId);
-    const { rows } = await pool.query<{ id: number }>(
-      `INSERT INTO agent_proposals (user_id, tool, args, summary, chat_id)
-       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-      [userId, tool.name, JSON.stringify(input), summary, chatId],
-    );
     return {
       ok: true,
       data: {
         status: "pending_user_approval",
-        proposal_id: rows[0].id,
+        proposal_id: id,
         summary,
         message:
           "Not applied yet. The user sees this change as a card with Accept / Reject buttons. Do not say it was done.",
@@ -76,6 +71,40 @@ export async function callAgentTool(
     if (err instanceof AgentToolError) return { ok: false, error: err.message };
     console.error(`Agent tool ${name} failed:`, err instanceof Error ? err.stack ?? err.message : err);
     return { ok: false, error: "Internal error while running the tool" };
+  }
+}
+
+/** Store a pending proposal, or return null when the user already has
+ *  MAX_PENDING_PROPOSALS. A per-user advisory lock serializes the count and
+ *  insert, so parallel tool calls can't all pass the cap. */
+async function insertProposal(
+  userId: string,
+  tool: string,
+  input: unknown,
+  summary: string,
+  chatId: number | null,
+): Promise<number | null> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [userId]);
+    const { rows: count } = await client.query<{ count: number }>(PENDING_COUNT_SQL, [userId]);
+    if ((count[0]?.count ?? 0) >= MAX_PENDING_PROPOSALS) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    const { rows } = await client.query<{ id: number }>(
+      `INSERT INTO agent_proposals (user_id, tool, args, summary, chat_id)
+       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+      [userId, tool, JSON.stringify(input), summary, chatId],
+    );
+    await client.query("COMMIT");
+    return rows[0].id;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
   }
 }
 
@@ -98,11 +127,11 @@ async function runningChatId(userId: string): Promise<number | null> {
   }
 }
 
+const PENDING_COUNT_SQL =
+  "SELECT COUNT(*)::int AS count FROM agent_proposals WHERE user_id = $1 AND status = 'pending'";
+
 export async function countPendingProposals(userId: string): Promise<number> {
-  const { rows } = await pool.query<{ count: number }>(
-    "SELECT COUNT(*)::int AS count FROM agent_proposals WHERE user_id = $1 AND status = 'pending'",
-    [userId],
-  );
+  const { rows } = await pool.query<{ count: number }>(PENDING_COUNT_SQL, [userId]);
   return rows[0]?.count ?? 0;
 }
 

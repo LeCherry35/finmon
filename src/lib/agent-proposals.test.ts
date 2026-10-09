@@ -37,7 +37,7 @@ const readTool = {
   run: vi.fn(),
 };
 const writeTool = {
-  name: "delete_transaction",
+  name: "delete_transactions",
   input: z.object({ id: z.number() }),
   requiresApproval: true,
   describe: vi.fn(),
@@ -55,7 +55,7 @@ beforeEach(() => {
     .mockReset()
     .mockImplementation(
       (n: string) =>
-        ({ list_categories: readTool, delete_transaction: writeTool })[n as "list_categories"],
+        ({ list_categories: readTool, delete_transactions: writeTool })[n as "list_categories"],
     );
 });
 
@@ -70,19 +70,30 @@ describe("callAgentTool", () => {
     expect(query).not.toHaveBeenCalled();
   });
 
+  /** Route the proposal-storing queries: the pending COUNT returns `count`,
+   *  the INSERT returns id 12, the running-chat lookup returns two chats. */
+  function db(count = 0) {
+    query.mockImplementation(async (sql: string) => {
+      if (/COUNT/.test(sql)) return { rows: [{ count }] };
+      if (/FROM agent_chats/.test(sql))
+        return { rows: [{ id: 5, opencode_session_id: "ses_1" }, { id: 6, opencode_session_id: "ses_2" }] };
+      if (/INSERT/.test(sql)) return { rows: [{ id: 12 }] };
+      return { rows: [] };
+    });
+  }
+  const statements = () => query.mock.calls.map(([sql]) => String(sql).trim());
+  const insertCall = () => query.mock.calls.find(([sql]) => /INSERT/.test(sql))!;
+
   it("stores an approval tool call as a pending proposal without running it", async () => {
     writeTool.describe.mockResolvedValue("Delete transaction #9");
-    query
-      .mockResolvedValueOnce({ rows: [{ count: 0 }] })
-      .mockResolvedValueOnce({ rows: [{ id: 12 }] });
+    db();
 
-    const result = await callAgentTool("user-1", "delete_transaction", { id: 9 });
+    const result = await callAgentTool("user-1", "delete_transactions", { id: 9 });
 
     expect(writeTool.run).not.toHaveBeenCalled();
-    expect(query.mock.calls[1][0]).toMatch(/INSERT INTO agent_proposals/);
-    expect(query.mock.calls[1][1]).toEqual([
+    expect(insertCall()[1]).toEqual([
       "user-1",
-      "delete_transaction",
+      "delete_transactions",
       '{"id":9}',
       "Delete transaction #9",
       null, // no chat has a running turn
@@ -93,6 +104,16 @@ describe("callAgentTool", () => {
     });
   });
 
+  it("counts and inserts under the user's advisory lock, in one transaction", async () => {
+    writeTool.describe.mockResolvedValue("s");
+    db();
+    await callAgentTool("user-1", "delete_transactions", { id: 9 });
+    const order = statements().map((s) => s.split(/\s/)[0]);
+    expect(order).toEqual(["BEGIN", "SELECT", "SELECT", "INSERT", "COMMIT"]);
+    expect(query.mock.calls[1]).toEqual(["SELECT pg_advisory_xact_lock(hashtext($1))", ["user-1"]]);
+    expect(release).toHaveBeenCalled();
+  });
+
   it.each([
     [["ses_1"], 5],
     [["ses_1", "ses_2"], null], // two running chats: ambiguous
@@ -100,42 +121,39 @@ describe("callAgentTool", () => {
   ])("links the proposal to the user's one running chat (%#)", async (busy, chatId) => {
     writeTool.describe.mockResolvedValue("s");
     busySessionIds.mockResolvedValue(new Set(busy));
-    query.mockImplementation(async (sql: string) => {
-      if (/COUNT/.test(sql)) return { rows: [{ count: 0 }] };
-      if (/FROM agent_chats/.test(sql))
-        return { rows: [{ id: 5, opencode_session_id: "ses_1" }, { id: 6, opencode_session_id: "ses_2" }] };
-      return { rows: [{ id: 12 }] };
-    });
-    await callAgentTool("user-1", "delete_transaction", { id: 9 });
-    const insert = query.mock.calls.find(([sql]) => /INSERT/.test(sql))!;
-    expect(insert[1].at(-1)).toBe(chatId);
+    db();
+    await callAgentTool("user-1", "delete_transactions", { id: 9 });
+    expect(insertCall()[1].at(-1)).toBe(chatId);
   });
 
   it("still stores the proposal when the session status can't be read", async () => {
     writeTool.describe.mockResolvedValue("s");
     busySessionIds.mockRejectedValue(new Error("down"));
     vi.spyOn(console, "error").mockImplementation(() => {});
-    query.mockResolvedValueOnce({ rows: [{ count: 0 }] }).mockResolvedValueOnce({ rows: [{ id: 12 }] });
-    expect(await callAgentTool("user-1", "delete_transaction", { id: 9 })).toMatchObject({ ok: true });
-    expect(query.mock.calls[1][1].at(-1)).toBeNull();
+    db();
+    expect(await callAgentTool("user-1", "delete_transactions", { id: 9 })).toMatchObject({ ok: true });
+    expect(insertCall()[1].at(-1)).toBeNull();
   });
 
   it("refuses new proposals once the pending cap is reached", async () => {
-    query.mockResolvedValueOnce({ rows: [{ count: MAX_PENDING_PROPOSALS }] });
-    const result = await callAgentTool("user-1", "delete_transaction", { id: 9 });
-    expect(result.ok).toBe(false);
-    expect(writeTool.describe).not.toHaveBeenCalled();
+    writeTool.describe.mockResolvedValue("s");
+    db(MAX_PENDING_PROPOSALS);
+    const result = await callAgentTool("user-1", "delete_transactions", { id: 9 });
+    expect(result).toMatchObject({ ok: false, error: expect.stringMatching(/already 20 changes waiting/) });
+    expect(statements()).toContain("ROLLBACK");
+    expect(insertCall()).toBeUndefined();
+    expect(release).toHaveBeenCalled();
   });
 
   it("reports describe failures, bad input and unknown tools as errors, storing nothing", async () => {
     query.mockResolvedValue({ rows: [{ count: 0 }] });
     writeTool.describe.mockRejectedValue(new ToolError("Transaction 9 not found"));
 
-    expect(await callAgentTool("user-1", "delete_transaction", { id: 9 })).toEqual({
+    expect(await callAgentTool("user-1", "delete_transactions", { id: 9 })).toEqual({
       ok: false,
       error: "Transaction 9 not found",
     });
-    expect(await callAgentTool("user-1", "delete_transaction", { id: "x" })).toEqual({
+    expect(await callAgentTool("user-1", "delete_transactions", { id: "x" })).toEqual({
       ok: false,
       error: "bad input",
     });
@@ -150,7 +168,7 @@ describe("callAgentTool", () => {
 describe("decideProposal", () => {
   const pending = {
     id: 12,
-    tool: "delete_transaction",
+    tool: "delete_transactions",
     args: { id: 9 },
     summary: "s",
     status: "pending",

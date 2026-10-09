@@ -197,3 +197,14 @@ export async function deleteTransactionFor(
   if (result?.rowCount === 0) return { ok: false, error: "Transaction not found" };
   return { ok: true };
 }
+
+/** Delete several transactions at once (the assistant's delete_transactions);
+ *  returns the ids that existed and were deleted. */
+export async function deleteTransactionsFor(userId: string, ids: number[]): Promise<number[]> {
+  const { rows } = await pool.query<{ id: number }>(
+    "DELETE FROM transactions WHERE user_id = $1 AND id = ANY($2::int[]) RETURNING id",
+    [userId, ids],
+  );
+  revalidatePath("/transactions");
+  return rows.map((r) => r.id);
+}

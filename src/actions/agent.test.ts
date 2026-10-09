@@ -144,7 +144,7 @@ describe("sendAgentMessage", () => {
   it("attaches the user's proposals referenced by tool calls", async () => {
     query.mockResolvedValueOnce({ rows: [chatRow] });
     oc.getAgentMessages.mockResolvedValue([
-      { id: "m1", role: "assistant", text: "", error: null, createdAt: 1, tools: [{ name: "delete_transaction", status: "completed", proposalId: 12, error: null }] },
+      { id: "m1", role: "assistant", text: "", error: null, createdAt: 1, tools: [{ name: "delete_transactions", status: "completed", proposalId: 12, error: null }] },
     ]);
     getProposals.mockResolvedValue([{ id: 12, status: "pending" }]);
 
@@ -285,7 +285,7 @@ describe("accept/reject", () => {
 
   it("decides as the signed-in user and tells the agent the outcome", async () => {
     db();
-    decideProposal.mockResolvedValue({ ok: true, proposal: { id: 12, tool: "delete_transaction", status: "rejected" } });
+    decideProposal.mockResolvedValue({ ok: true, proposal: { id: 12, tool: "delete_transactions", status: "rejected" } });
     oc.noteProposalDecision.mockResolvedValue(undefined);
 
     const result = await rejectProposal(5, 12);
@@ -325,7 +325,7 @@ describe("listAgentChats", () => {
 describe("deleteAgentChat", () => {
   const toolMessage = (proposalId: number) => ({
     id: "m1", role: "assistant", text: "", error: null, createdAt: 1,
-    tools: [{ name: "delete_transaction", status: "completed", proposalId, error: null }],
+    tools: [{ name: "delete_transactions", status: "completed", proposalId, error: null }],
   });
 
   it("refuses a chat the user doesn't own (or already deleted)", async () => {

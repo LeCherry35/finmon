@@ -13,7 +13,7 @@ const q = vi.hoisted(() => ({
 const m = vi.hoisted(() => ({
   createTransactionFor: vi.fn(),
   updateTransactionFor: vi.fn(),
-  deleteTransactionFor: vi.fn(),
+  deleteTransactionsFor: vi.fn(),
   addProductFor: vi.fn(),
   updateProductFor: vi.fn(),
   deleteProductFor: vi.fn(),
@@ -97,7 +97,7 @@ describe("registry", () => {
         "create_category",
         "create_transaction",
         "delete_product",
-        "delete_transaction",
+        "delete_transactions",
         "replace_receipt_photo",
         "set_plans",
         "update_category",
@@ -333,6 +333,39 @@ describe("write tools", () => {
     await expect(run("update_transactions", "user-1", { ids: [9, 10], note: "x" })).rejects.toThrow(
       "#10: Bad date (1 of 2 already updated)",
     );
+  });
+
+  it("delete_transactions describes one row like before, many as a totals headline", async () => {
+    q.getTransaction.mockResolvedValue(tx);
+    expect(await describeCall("delete_transactions", "user-1", { ids: [9] })).toBe(
+      "Delete transaction #9 spend 10 on 2026-09-01 at Shop (Food)",
+    );
+
+    q.getTransaction.mockImplementation(async (_u: string, id: number) => ({
+      ...tx,
+      id,
+      date: `2026-09-${String(id).padStart(2, "0")}`,
+      ...(id === 1 ? { amount: null, scanned_total: 2.5 } : {}),
+      ...(id === 2 ? { type: "income", amount: 100 } : {}),
+    }));
+    const lines = (await describeCall("delete_transactions", "user-1", { ids: [...Array(12)].map((_, n) => n + 1) })).split("\n");
+    expect(lines[0]).toBe("Delete 12 transactions: spend 102.5, income 100, 2026-09-01 – 2026-09-12");
+    expect(lines).toHaveLength(1 + 10 + 1);
+    expect(lines.at(-1)).toBe("…and 2 more");
+  });
+
+  it("delete_transactions refuses missing rows up front, tolerates rows gone by Accept", async () => {
+    q.getTransaction.mockImplementation(async (_u: string, id: number) => (id === 9 ? tx : null));
+    await expect(describeCall("delete_transactions", "user-1", { ids: [9, 10] })).rejects.toThrow(
+      "Transactions not found: 10",
+    );
+
+    m.deleteTransactionsFor.mockResolvedValueOnce([9]);
+    expect(await run("delete_transactions", "user-1", { ids: [9, 10, 9] })).toEqual({ deleted_transaction_ids: [9] });
+    expect(m.deleteTransactionsFor).toHaveBeenCalledWith("user-1", [9, 10]);
+
+    m.deleteTransactionsFor.mockResolvedValueOnce([]);
+    await expect(run("delete_transactions", "user-1", { ids: [9] })).rejects.toThrow("Already deleted");
   });
 
   it("surfaces a mutation's validation error so the proposal fails", async () => {

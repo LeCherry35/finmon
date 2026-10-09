@@ -38,7 +38,7 @@ function chatState(
         error: null,
         createdAt: 2,
         tools: withProposal
-          ? [{ name: "delete_transaction", status: "completed", proposalId: 12 as number | null, error: null }]
+          ? [{ name: "delete_transactions", status: "completed", proposalId: 12 as number | null, error: null }]
           : [],
       },
     ],

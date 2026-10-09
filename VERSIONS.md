@@ -8,6 +8,18 @@ Entry shape: `## <version> — <YYYY-MM-DD> — <headline>`, then **Added / Chan
 
 ---
 
+## 0.19.0 — 2026-10-09 — No more suggestion floods
+
+**Added**
+- "Accept all" / "Reject all" on the Suggestions page (click twice to confirm). Each chat gets a single note about the outcome.
+- The assistant deletes transactions in bulk: `delete_transactions` takes up to 100 at once as one suggestion, whose card shows the count, spend/income totals and date range.
+
+**Fixed**
+- The limit of 20 pending suggestions now holds. Parallel tool calls could all pass the check at once (one chat produced 201 suggestions).
+
+**Migrations**
+- `024_retire_delete_transaction.sql`: rejects pending suggestions of the removed single-row `delete_transaction` tool.
+
 ## 0.18.0 — 2026-10-09 — A simpler, sharper assistant toolset
 
 **Added**
