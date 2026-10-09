@@ -4,6 +4,7 @@ import { effectiveModel } from "@/lib/agent-models";
 import { decideProposal, getProposals, type AgentProposal } from "@/lib/agent-proposals";
 import {
   AgentUnavailableError,
+  busySessionIds,
   getAgentMessages,
   isSessionBusy,
   noteProposalDecision,
@@ -149,19 +150,71 @@ export async function decideWithNote(
   const result = await decideProposal(userId, proposalId, decision);
   if (!result.ok) return result;
 
-  const p = result.proposal;
-  if (session) {
-    const note =
-      p.status === "accepted"
-        ? `The user ACCEPTED proposal ${p.id} (${p.tool}); it has been applied.`
-        : p.status === "rejected"
-          ? `The user REJECTED proposal ${p.id} (${p.tool}); nothing was changed.`
-          : `The user accepted proposal ${p.id} (${p.tool}) but applying it FAILED: ${p.error}. Nothing was changed.`;
-    // The decision is already recorded; failing to inform the agent shouldn't
-    // surface as an error for the user.
-    await noteProposalDecision(userId, session, note).catch((err) =>
-      console.error("Could not note proposal decision:", err),
-    );
+  if (session) await noteDecisions(userId, session, [result.proposal]);
+  return { ok: true, data: result.proposal };
+}
+
+/**
+ * Accept or reject every pending proposal (the Suggestions page's "all"
+ * buttons): accepts apply oldest first, a failure doesn't stop the rest.
+ * Refused while any of their chats is running; each chat then gets one note.
+ */
+export async function decideAllPending(
+  userId: string,
+  decision: "accept" | "reject",
+): Promise<AgentResult<AgentProposal[]>> {
+  const { rows: pending } = await pool.query<{ id: number; session: string | null }>(
+    `SELECT p.id, c.opencode_session_id AS session FROM agent_proposals p
+     LEFT JOIN agent_chats c ON c.id = p.chat_id AND c.deleted_at IS NULL
+     WHERE p.user_id = $1 AND p.status = 'pending'
+     ORDER BY p.created_at, p.id`,
+    [userId],
+  );
+  if (pending.length === 0) return { ok: true, data: [] };
+  const busy = await busySessionIds(userId).catch(() => new Set<string>());
+  if (pending.some((p) => p.session && busy.has(p.session))) return { ok: false, error: STILL_RUNNING };
+
+  let decided: AgentProposal[] = [];
+  if (decision === "reject") {
+    ({ rows: decided } = await pool.query<AgentProposal>(
+      `UPDATE agent_proposals SET status = 'rejected', decided_at = now()
+       WHERE user_id = $1 AND id = ANY($2::int[]) AND status = 'pending'
+       RETURNING id, chat_id, tool, args, summary, status, error, created_at, decided_at`,
+      [userId, pending.map((p) => p.id)],
+    ));
+  } else {
+    for (const { id } of pending) {
+      const r = await decideProposal(userId, id, "accept");
+      if (r.ok) decided.push(r.proposal); // !ok: decided meanwhile elsewhere
+    }
   }
-  return { ok: true, data: p };
+
+  const sessionOf = new Map(pending.map((p) => [p.id, p.session]));
+  const bySession = Map.groupBy(
+    decided.filter((p) => sessionOf.get(p.id)),
+    (p) => sessionOf.get(p.id)!,
+  );
+  for (const [session, ps] of bySession) await noteDecisions(userId, session, ps);
+  return { ok: true, data: decided };
+}
+
+/** Tell the agent, in its chat, how the user decided these proposals. */
+async function noteDecisions(userId: string, session: string, ps: AgentProposal[]) {
+  const label = (xs: AgentProposal[]) =>
+    xs.length === 1 ? `proposal ${xs[0].id} (${xs[0].tool})` : `proposals ${xs.map((p) => p.id).join(", ")}`;
+  const accepted = ps.filter((p) => p.status === "accepted");
+  const rejected = ps.filter((p) => p.status === "rejected");
+  const failed = ps.filter((p) => p.status === "failed");
+  const note = [
+    accepted.length > 0 && `The user ACCEPTED ${label(accepted)}; ${accepted.length === 1 ? "it has" : "they have"} been applied.`,
+    rejected.length > 0 && `The user REJECTED ${label(rejected)}; nothing was changed.`,
+    ...failed.map((p) => `The user accepted ${label([p])} but applying it FAILED: ${p.error}. Nothing was changed.`),
+  ]
+    .filter(Boolean)
+    .join(" ");
+  // The decision is already recorded; failing to inform the agent shouldn't
+  // surface as an error for the user.
+  await noteProposalDecision(userId, session, note).catch((err) =>
+    console.error("Could not note proposal decision:", err),
+  );
 }

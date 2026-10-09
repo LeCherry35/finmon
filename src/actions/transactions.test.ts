@@ -22,6 +22,7 @@ import {
   updateTransaction,
   deleteTransaction,
 } from "@/actions/transactions";
+import { deleteTransactionsFor } from "@/lib/mutations/transactions";
 
 beforeEach(() => {
   query.mockReset();
@@ -268,5 +269,16 @@ describe("deleteTransaction", () => {
   it.each(["0", "-1", "abc", ""])("rejects a non-positive / NaN id (%j) without querying", async (id) => {
     await deleteTransaction(formData({ id }));
     expect(query).not.toHaveBeenCalled();
+  });
+});
+
+describe("deleteTransactionsFor", () => {
+  it("deletes the user's rows in one query and returns the ids that existed", async () => {
+    query.mockResolvedValueOnce({ rows: [{ id: 3 }] });
+    expect(await deleteTransactionsFor(TEST_USER_ID, [3, 4])).toEqual([3]);
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toMatch(/WHERE user_id = \$1 AND id = ANY\(\$2::int\[\]\) RETURNING id/);
+    expect(params).toEqual([TEST_USER_ID, [3, 4]]);
+    expect(revalidatePath).toHaveBeenCalledWith("/transactions");
   });
 });

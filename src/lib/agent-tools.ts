@@ -14,7 +14,7 @@ import {
 } from "@/db/queries";
 import {
   createTransactionFor,
-  deleteTransactionFor,
+  deleteTransactionsFor,
   updateTransactionFor,
 } from "@/lib/mutations/transactions";
 import {
@@ -259,7 +259,8 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 
 /** summarize_transactions returns at most this many groups (and groups_total). */
 const MAX_SUMMARY_GROUPS = 100;
-/** Most rows one bulk proposal (update_transactions, set_plans) may touch. */
+/** Most rows one bulk proposal (update_transactions, delete_transactions,
+ *  set_plans) may touch. */
 const MAX_BULK = 100;
 /** Transactions listed by name on a bulk proposal's card. */
 const SUMMARY_ROWS = 10;
@@ -297,6 +298,19 @@ async function transactionPatch(
     shown.category = category.name;
   }
   return { patch, shown };
+}
+
+/** A delete_transactions card's headline: count, spend/income totals
+ *  (effective amounts) and the date range. */
+function deleteHeadline(txs: Transaction[]) {
+  const sum = (type: string) =>
+    round2(txs.filter((t) => t.type === type).reduce((n, t) => n + Number(t.amount ?? t.scanned_total ?? 0), 0));
+  const totals = (["spend", "income"] as const)
+    .filter((type) => txs.some((t) => t.type === type))
+    .map((type) => `${type} ${fmt(sum(type))}`);
+  const dates = txs.map((t) => t.date).sort();
+  const range = dates[0] === dates.at(-1) ? dates[0] : `${dates[0]} – ${dates.at(-1)}`;
+  return `Delete ${txs.length} transactions: ${totals.join(", ")}, ${range}`;
 }
 
 /** set_plans entries → the user's categories they name; unknown or repeated names fail. */
@@ -795,14 +809,24 @@ export const AGENT_TOOLS: AgentTool[] = [
     },
   }),
   tool({
-    name: "delete_transaction",
-    description: "Propose deleting a transaction together with its products and receipt.",
-    input: idInput,
+    name: "delete_transactions",
+    description: `Propose deleting one or more transactions (with their products and receipts) in a single approval. Up to ${MAX_BULK} ids per call.`,
+    input: z.object({ ids: z.array(ID).min(1).max(MAX_BULK) }),
     requiresApproval: true,
-    describe: async (userId, i) => `Delete transaction ${txLabel(await requireTransaction(userId, i.id))}`,
-    run: async (userId, i) => {
-      unwrap(await deleteTransactionFor(userId, toFormData(i)));
-      return { deleted_transaction_id: i.id };
+    describe: async (userId, { ids }) => {
+      const txs = await requireTransactions(userId, ids);
+      if (txs.length === 1) return `Delete transaction ${txLabel(txs[0])}`;
+      return [
+        deleteHeadline(txs),
+        ...txs.slice(0, SUMMARY_ROWS).map(txLabel),
+        ...(txs.length > SUMMARY_ROWS ? [`…and ${txs.length - SUMMARY_ROWS} more`] : []),
+      ].join("\n");
+    },
+    run: async (userId, { ids }) => {
+      // Rows deleted since the proposal are fine: gone is the goal.
+      const deleted = await deleteTransactionsFor(userId, [...new Set(ids)]);
+      if (deleted.length === 0) throw new AgentToolError("Already deleted");
+      return { deleted_transaction_ids: deleted };
     },
   }),
   tool({

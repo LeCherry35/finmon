@@ -4,12 +4,14 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { SuggestionItem } from "@/lib/agent-proposals";
 
-const { acceptSuggestion, rejectSuggestion, refresh } = vi.hoisted(() => ({
+const { acceptSuggestion, rejectSuggestion, acceptAllSuggestions, rejectAllSuggestions, refresh } = vi.hoisted(() => ({
   acceptSuggestion: vi.fn(),
   rejectSuggestion: vi.fn(),
+  acceptAllSuggestions: vi.fn(),
+  rejectAllSuggestions: vi.fn(),
   refresh: vi.fn(),
 }));
-vi.mock("@/actions/suggestions", () => ({ acceptSuggestion, rejectSuggestion }));
+vi.mock("@/actions/suggestions", () => ({ acceptSuggestion, rejectSuggestion, acceptAllSuggestions, rejectAllSuggestions }));
 vi.mock("@/components/agent/SuggestionCount", () => ({
   useSuggestionCount: () => ({ count: 1, refresh }),
 }));
@@ -35,6 +37,8 @@ const section = (name: RegExp) => screen.getByRole("heading", { name }).parentEl
 beforeEach(() => {
   acceptSuggestion.mockReset();
   rejectSuggestion.mockReset();
+  acceptAllSuggestions.mockReset();
+  rejectAllSuggestions.mockReset();
   refresh.mockReset();
 });
 
@@ -84,5 +88,36 @@ describe("SuggestionsView", () => {
     await userEvent.click(screen.getByRole("button", { name: "Accept" }));
     expect(screen.getByRole("heading", { name: /Pending \(0\)/ })).toBeTruthy();
     expect(screen.getByText("Already accepted")).toBeTruthy();
+  });
+
+  it("offers Accept/Reject all only for two or more pending", () => {
+    render(<SuggestionsView initialPending={[item(2)]} initialHistory={[]} />);
+    expect(screen.queryByRole("button", { name: "Accept all" })).toBeNull();
+  });
+
+  it("asks for a second click, then rejects all and moves them into history", async () => {
+    rejectAllSuggestions.mockResolvedValue({
+      ok: true,
+      data: [2, 3].map((id) => item(id, { status: "rejected", decided_at: "2026-09-19T11:00:00Z" })),
+    });
+    render(<SuggestionsView initialPending={[item(2), item(3)]} initialHistory={[]} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Reject all" }));
+    expect(rejectAllSuggestions).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Reject all 2?" }));
+
+    expect(rejectAllSuggestions).toHaveBeenCalled();
+    expect(section(/Pending \(0\)/).textContent).toContain("Nothing waiting");
+    expect(within(section(/History/)).getAllByText("Rejected")).toHaveLength(2);
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it("keeps everything pending and shows why when deciding all is refused", async () => {
+    acceptAllSuggestions.mockResolvedValue({ ok: false, error: "The assistant is still answering. Wait, or stop it first." });
+    render(<SuggestionsView initialPending={[item(2), item(3)]} initialHistory={[]} />);
+    await userEvent.click(screen.getByRole("button", { name: "Accept all" }));
+    await userEvent.click(screen.getByRole("button", { name: "Accept all 2?" }));
+    expect(screen.getByText(/still answering/)).toBeTruthy();
+    expect(screen.getByRole("heading", { name: /Pending \(2\)/ })).toBeTruthy();
   });
 });

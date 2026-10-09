@@ -3,11 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/dal";
 import { countPendingProposals, type AgentProposal } from "@/lib/agent-proposals";
-import { decideWithNote, guard, type AgentResult as Result } from "@/lib/agent-chats";
+import { decideAllPending, decideWithNote, guard, type AgentResult as Result } from "@/lib/agent-chats";
 
 // The Suggestions page: the assistant's proposals outside their chat.
 // Declared as an alias, not re-exported: see src/actions/agent.ts.
 export type SuggestionResult = Result<AgentProposal>;
+export type SuggestionsResult = Result<AgentProposal[]>;
 
 /** Pending proposals, for the count button (refetched on navigation). */
 export async function countPendingSuggestions(): Promise<number> {
@@ -33,4 +34,23 @@ export async function acceptSuggestion(proposalId: number) {
 
 export async function rejectSuggestion(proposalId: number) {
   return decide(proposalId, "reject");
+}
+
+/** Decide every pending suggestion at once (decideAllPending). */
+async function decideAll(decision: "accept" | "reject"): Promise<SuggestionsResult> {
+  const { id: userId } = await requireUser();
+  const result = await guard(async () => {
+    const r = await decideAllPending(userId, decision);
+    if (r.ok) revalidatePath("/suggestions");
+    return r;
+  });
+  return result.ok ? result.data : result;
+}
+
+export async function acceptAllSuggestions() {
+  return decideAll("accept");
+}
+
+export async function rejectAllSuggestions() {
+  return decideAll("reject");
 }
