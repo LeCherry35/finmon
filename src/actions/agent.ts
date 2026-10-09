@@ -90,11 +90,18 @@ export async function listAgentChats(): Promise<AgentChatSummary[]> {
 
 /** Hide a chat from the user. The row and the opencode session are kept for
  *  the record; proposals it left pending are rejected, since nothing can
- *  accept them any more. */
+ *  accept them any more. A chat already deleted (e.g. in another tab) counts
+ *  as done. */
 export async function deleteAgentChat(chatId: number): Promise<AgentResult<null>> {
   const { id: userId } = await requireUser();
   const chat = await ownedChat(userId, chatId);
-  if (!chat) return { ok: false, error: "Chat not found" };
+  if (!chat) {
+    const { rows } = await pool.query(
+      "SELECT 1 FROM agent_chats WHERE id = $1 AND user_id = $2 AND deleted_at IS NOT NULL",
+      [chatId, userId],
+    );
+    return rows.length > 0 ? { ok: true, data: null } : { ok: false, error: "Chat not found" };
+  }
 
   await pool.query(
     "UPDATE agent_chats SET deleted_at = now() WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL",

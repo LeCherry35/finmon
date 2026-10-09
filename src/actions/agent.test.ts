@@ -328,11 +328,18 @@ describe("deleteAgentChat", () => {
     tools: [{ name: "delete_transactions", status: "completed", proposalId, error: null }],
   });
 
-  it("refuses a chat the user doesn't own (or already deleted)", async () => {
-    query.mockResolvedValueOnce({ rows: [] });
+  it("refuses a chat the user doesn't own", async () => {
+    query.mockResolvedValue({ rows: [] });
     expect(await deleteAgentChat(5)).toEqual({ ok: false, error: "Chat not found" });
     expect(query.mock.calls[0][0]).toMatch(/deleted_at IS NULL/);
-    expect(query).toHaveBeenCalledTimes(1);
+    expect(query.mock.calls[1][1]).toEqual([5, TEST_USER_ID]);
+  });
+
+  it("treats a chat already deleted (e.g. in another tab) as done", async () => {
+    query.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [{}] });
+    expect(await deleteAgentChat(5)).toEqual({ ok: true, data: null });
+    expect(query.mock.calls[1][0]).toMatch(/deleted_at IS NOT NULL/);
+    expect(query).toHaveBeenCalledTimes(2);
   });
 
   it("soft-deletes the chat and rejects its pending proposals", async () => {

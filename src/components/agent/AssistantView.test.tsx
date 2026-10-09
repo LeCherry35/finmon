@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const actions = vi.hoisted(() => ({
@@ -65,6 +65,28 @@ beforeEach(() => {
 });
 
 describe("AssistantView", () => {
+  it("drops a chat deleted in another tab from the list", async () => {
+    const user = userEvent.setup();
+    actions.deleteAgentChat.mockResolvedValue({ ok: true, data: null }); // already deleted counts as done
+    render(
+      <AssistantView
+        initialChats={[
+          { id: 8, title: "stale", created_at: "2026-09-17T10:00:00Z" },
+          { id: 7, title: "hello", created_at: "2026-09-17T10:00:00Z" },
+        ]}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: /New chat/ }));
+    const row = screen.getByText("stale").closest("li")!;
+    await user.click(within(row).getByRole("button", { name: "Delete chat" }));
+    await user.click(within(row).getByRole("button", { name: "Confirm delete" }));
+
+    expect(actions.deleteAgentChat).toHaveBeenCalledWith(8);
+    await waitFor(() => expect(screen.queryByText("stale")).toBeNull());
+    expect(actions.listAgentChats).toHaveBeenCalled();
+    expect(screen.getByText("hello")).toBeTruthy();
+  });
+
   it("keeps Send usable after the first message and continues the new chat", async () => {
     const user = userEvent.setup();
     actions.sendAgentMessage.mockResolvedValue({ ok: true, data: chatState() });
