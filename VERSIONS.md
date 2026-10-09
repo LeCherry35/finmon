@@ -8,10 +8,11 @@ Entry shape: `## <version> — <YYYY-MM-DD> — <headline>`, then **Added / Chan
 
 ---
 
-## 0.19.1 — 2026-10-09 — The assistant sees new tools without an opencode restart
+## 0.19.1 — 2026-10-09 — Assistant fixes: new tools without an opencode restart, stale chats
 
 **Fixed**
 - After a deploy that changed the assistant's tools, opencode kept the old tool list until it was restarted, so the agent still called `delete_transaction` and got "Unknown tool". Each user's opencode config now carries a fingerprint of the toolset, so a changed toolset reloads their instance on the next message.
+- A chat deleted in another tab stayed in the chat list and couldn't be deleted ("Chat not found"). Deleting an already-deleted chat now succeeds, and the list is re-read after a delete or a failed open.
 
 ## 0.19.0 — 2026-10-09 — No more suggestion floods
 

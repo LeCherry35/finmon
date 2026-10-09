@@ -269,6 +269,11 @@ export default function AssistantView({
     });
   }
 
+  /** Re-read the chat list: another tab may have added or deleted chats. */
+  async function resyncChats() {
+    setChats(await listAgentChats().catch(() => chats));
+  }
+
   function selectChat(id: number | null) {
     if (inFlight.current) return;
     setError(null);
@@ -279,18 +284,19 @@ export default function AssistantView({
       return;
     }
     if (id === chat?.chatId) return;
-    void run(async () => apply(await loadAgentChat(id)));
+    void run(async () => {
+      const result = await loadAgentChat(id);
+      apply(result);
+      if (!result.ok) await resyncChats();
+    });
   }
 
   function removeChat(id: number) {
     void run(async () => {
       const result = await deleteAgentChat(id);
-      if (!result.ok) {
-        setError(result.error);
-        return;
-      }
-      setChats((cs) => cs.filter((c) => c.id !== id));
-      if (chat?.chatId === id) showChat(null);
+      if (!result.ok) setError(result.error);
+      else if (chat?.chatId === id) showChat(null);
+      await resyncChats();
     });
   }
 
