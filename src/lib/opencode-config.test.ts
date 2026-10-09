@@ -24,6 +24,8 @@ describe("buildOpencodeConfig", () => {
   it("configures only the finmon MCP server, with the user's bearer token", () => {
     expect(Object.keys(cfg.mcp)).toEqual(["finmon"]);
     expect(cfg.mcp.finmon.headers).toEqual({ Authorization: "Bearer tok" });
+    const stamped = buildOpencodeConfig("tok", { mcpUrl: "x", model: "openai/gpt-4.1-mini", toolset: "abc" });
+    expect(stamped.mcp.finmon.headers).toEqual({ Authorization: "Bearer tok", "X-Finmon-Toolset": "abc" });
     expect(cfg.plugin).toEqual([]);
   });
 
