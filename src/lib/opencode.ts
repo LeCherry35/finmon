@@ -370,11 +370,6 @@ export async function getAgentMessages(userId: string, sessionId: string): Promi
   return raw.map(toAgentMessage).filter((m): m is AgentMessage => m !== null);
 }
 
-/** Start the agent's turn on the user's message and return at once; the turn
- *  runs on in opencode (see isSessionBusy).
- *  `receipt` mode (a photo is attached) adds the receipt instructions and
- *  limits the turn to scan_receipt + create_transaction, and always runs on the
- *  default model. `model` (already validated) picks the model for a chat turn. */
 /** The "today" a turn is told: the browser's local date when it's a real date
  *  within a day of the server's UTC date (any timezone), else the UTC date. */
 export function promptDate(clientToday?: string | null, now = new Date()): string {
@@ -384,6 +379,12 @@ export function promptDate(clientToday?: string | null, now = new Date()): strin
   return offset <= 86_400_000 ? clientToday : utc;
 }
 
+/** Start the agent's turn on the user's message and return at once; the turn
+ *  runs on in opencode (see isSessionBusy).
+ *  `receipt` mode (a photo is attached) adds the receipt instructions,
+ *  limits the turn to RECEIPT_PROMPT_TOOLS and always runs on the default
+ *  model. `model` (already validated) picks the model for a chat turn;
+ *  `clientToday` goes through promptDate. */
 export async function sendAgentPrompt(
   userId: string,
   sessionId: string,
