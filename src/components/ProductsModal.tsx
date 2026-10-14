@@ -9,6 +9,7 @@ import type { Product } from "@/actions/products";
 import type { Transaction, TransactionStatus } from "@/actions/transactions";
 import type { Category } from "@/actions/categories";
 import ReceiptUpload, { type StagedImage } from "@/components/ReceiptUpload";
+import { CURRENCIES, originalLabel, type Currency } from "@/lib/currencies";
 
 type FormFields = {
   name: string;
@@ -66,6 +67,9 @@ function appendFields(fd: FormData, f: FormFields) {
 
 const inputCls =
   "border border-zinc-300 rounded px-3 py-2 text-base md:text-sm focus:outline-none focus:ring-1 focus:ring-zinc-400";
+// inputCls minus rounding/padding-x, for the joined amount + currency pair.
+const fieldCls =
+  "border border-zinc-300 py-2 text-base md:text-sm focus:outline-none focus:ring-1 focus:ring-zinc-400";
 
 export default function ProductsModal({
   tx,
@@ -191,7 +195,8 @@ function TransactionEditor({
   categories: Category[];
 }) {
   const [editing, setEditing] = useState(false);
-  const [amount, setAmount] = useState(tx.amount != null ? String(tx.amount) : "");
+  const [amount, setAmount] = useState(enteredAmount(tx));
+  const [currency, setCurrency] = useState<Currency>(tx.currency ?? "UAH");
   const [type, setType] = useState<Transaction["type"]>(tx.type);
   const [categoryId, setCategoryId] = useState(
     tx.category_id != null ? String(tx.category_id) : "",
@@ -210,7 +215,8 @@ function TransactionEditor({
     Math.abs(tx.amount - tx.scanned_total) >= 1;
 
   function syncFromTx() {
-    setAmount(tx.amount != null ? String(tx.amount) : "");
+    setAmount(enteredAmount(tx));
+    setCurrency(tx.currency ?? "UAH");
     setType(tx.type);
     setCategoryId(tx.category_id != null ? String(tx.category_id) : "");
     setDate(tx.date);
@@ -223,6 +229,7 @@ function TransactionEditor({
       const fd = new FormData();
       fd.append("id", String(tx.id));
       fd.append("amount", amount);
+      fd.append("currency", currency);
       fd.append("type", type);
       fd.append("category_id", categoryId);
       fd.append("date", date);
@@ -264,7 +271,10 @@ function TransactionEditor({
         </div>
         <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
           {tx.amount != null ? (
-            <Detail label="Amount" value={tx.amount.toFixed(2)} />
+            <Detail
+              label="Amount"
+              value={withOriginal(tx.amount, tx.currency, tx.original_amount, tx.exchange_rate)}
+            />
           ) : (
             <div>
               <dt className="text-[11px] text-zinc-400">Amount</dt>
@@ -272,7 +282,10 @@ function TransactionEditor({
             </div>
           )}
           {tx.scanned_total != null && (
-            <Detail label="Receipt total" value={tx.scanned_total.toFixed(2)} />
+            <Detail
+              label="Receipt total"
+              value={withOriginal(tx.scanned_total, tx.scanned_currency, tx.scanned_original_total, null)}
+            />
           )}
           {/* Spend is the default — only surface the type when it's income. */}
           {tx.type === "income" && <Detail label="Type" value="Income" />}
@@ -298,16 +311,30 @@ function TransactionEditor({
   return (
     <div className="rounded-lg border border-zinc-200 p-3 space-y-2">
       <div className="grid grid-cols-2 gap-2">
-        <input
-          type="number"
-          step="0.01"
-          min="0.01"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-          placeholder="Amount"
-          aria-label="Amount"
-          className={inputCls}
-        />
+        <div className="flex min-w-0">
+          <input
+            type="number"
+            step="0.01"
+            min="0.01"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            placeholder="Amount"
+            aria-label="Amount"
+            className={`min-w-0 flex-1 rounded-l px-2 ${fieldCls}`}
+          />
+          <select
+            value={currency}
+            onChange={(e) => setCurrency(e.target.value as Currency)}
+            aria-label="Currency"
+            className={`-ml-px rounded-r px-1 ${fieldCls}`}
+          >
+            {CURRENCIES.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+        </div>
         <select
           value={type}
           onChange={(e) => setType(e.target.value as Transaction["type"])}
@@ -370,6 +397,23 @@ function TransactionEditor({
       </div>
     </div>
   );
+}
+
+/** The amount as the user entered it (USD/EUR original, or the UAH amount). */
+function enteredAmount(tx: Transaction): string {
+  const v = tx.original_amount ?? tx.amount;
+  return v != null ? String(v) : "";
+}
+
+/** "1038.00 (≈ $25.00 @ 41.52)" for a foreign original, else just the UAH figure. */
+function withOriginal(
+  uah: number,
+  currency: Currency | null | undefined,
+  original: number | null | undefined,
+  rate: number | null,
+): string {
+  if (!currency || currency === "UAH" || original == null) return uah.toFixed(2);
+  return `${uah.toFixed(2)} (${originalLabel(original, currency, rate)})`;
 }
 
 function Detail({
@@ -641,7 +685,7 @@ function ProductFieldsEditor({
           min="0.01"
           value={form.cost}
           onChange={set("cost")}
-          placeholder="Cost"
+          placeholder="Cost (UAH)"
           aria-label="Cost"
           className={inputCls}
         />
@@ -651,7 +695,7 @@ function ProductFieldsEditor({
           min="0.01"
           value={form.price}
           onChange={set("price")}
-          placeholder="Price"
+          placeholder="Price (UAH)"
           aria-label="Price"
           className={inputCls}
         />
@@ -685,7 +729,7 @@ function ProductFieldsEditor({
           min="0.01"
           value={form.discount}
           onChange={set("discount")}
-          placeholder="Discount"
+          placeholder="Discount (UAH)"
           aria-label="Discount"
           className={inputCls}
         />

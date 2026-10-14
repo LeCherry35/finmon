@@ -34,9 +34,12 @@ import {
   deleteTransactionProducts,
   getStoredReceipt,
   saveReceiptScan,
+  setReceiptTotal,
   upsertReceipt,
   type StoredReceipt,
 } from "@/lib/receipts";
+import { BASE_CURRENCY, CURRENCIES, type Currency } from "@/lib/currencies";
+import { CurrencyError, convert, convertScanToBase, getRate } from "@/lib/currency";
 import type { Transaction } from "@/actions/transactions";
 import type { ProductFields } from "@/actions/products";
 
@@ -154,6 +157,8 @@ function transactionView(t: Transaction) {
     date: t.date,
     type: t.type,
     amount: t.amount,
+    // amount is UAH; a USD/EUR entry also shows what was entered.
+    ...(t.currency !== BASE_CURRENCY && { original_amount: t.original_amount, currency: t.currency }),
     scanned_total: t.scanned_total ?? null,
     category_id: t.category_id,
     category_name: t.category_name ?? null,
@@ -230,10 +235,35 @@ async function readReceipt(userId: string, image: Buffer, contentType: string, l
   }
 }
 
-/** The scan as the model reads it back. */
+/** A currency lookup failure, as the model sees it. */
+async function rateOf(currency: Currency, date: string) {
+  try {
+    return await getRate(currency, date);
+  } catch (err) {
+    if (err instanceof CurrencyError) throw new AgentToolError(err.message);
+    throw err;
+  }
+}
+
+/** "25 USD ≈ 1038.00 UAH (NBU 41.52 on 2026-10-14)" for a proposal card; just
+ *  the amount for UAH. */
+async function amountText(amount: number | null | undefined, currency: Currency | undefined, date: string) {
+  if (amount == null || !currency || currency === BASE_CURRENCY) return fmt(amount);
+  const { rate, date: rateDate } = await rateOf(currency, date);
+  return `${amount} ${currency} ≈ ${round2(amount * rate).toFixed(2)} UAH (NBU ${rate} on ${rateDate})`;
+}
+
+/** A scan's printed total, flagged when it's foreign (converted on Accept). */
+const scanTotalText = (scan: ScanResult) =>
+  scan.currency && scan.currency !== BASE_CURRENCY
+    ? `${fmt(scan.total)} ${scan.currency} (converted to UAH on Accept)`
+    : fmt(scan.total);
+
+/** The scan as the model reads it back: money figures as printed, in `currency`. */
 function scanSummary(scan: ScanResult) {
   return {
     store: scan.store,
+    currency: scan.currency ?? BASE_CURRENCY,
     total: scan.total,
     date: scan.date,
     suggested_category: scan.category,
@@ -268,7 +298,9 @@ const SUMMARY_ROWS = 10;
 /** A transaction as an update_transactions card compares it: category by name. */
 const shownFields = (t: Transaction) => ({
   type: t.type,
-  amount: t.amount,
+  // As entered: the USD/EUR original, or the UAH amount.
+  amount: t.original_amount ?? t.amount,
+  currency: t.currency,
   date: t.date,
   note: t.note,
   store: t.store,
@@ -281,9 +313,13 @@ async function transactionPatch(
   userId: string,
   { category_name, ...fields }: Omit<In<typeof updateTransactionsInput>, "ids">,
 ) {
+  if (fields.currency !== undefined && fields.amount == null)
+    throw new AgentToolError("currency is the currency of amount — pass the amount with it");
   const patch: Record<string, unknown> = Object.fromEntries(
     Object.entries(fields).filter(([, v]) => v !== undefined),
   );
+  // A new amount without a currency is UAH, as on create.
+  if (fields.amount !== undefined) patch.currency = fields.currency ?? BASE_CURRENCY;
   const shown: Record<string, unknown> = { ...patch };
   if (category_name === null || category_name?.trim() === "") {
     patch.category_id = null;
@@ -389,7 +425,13 @@ const summarizeInput = z.object({
 
 const transactionFields = {
   type: z.enum(["income", "spend"]),
-  amount: MONEY.nullable().optional().describe("Positive amount. null clears it."),
+  amount: MONEY.nullable().optional().describe("Positive amount, in currency. null clears it."),
+  currency: z
+    .enum(CURRENCIES)
+    .optional()
+    .describe(
+      "Currency of amount, default UAH. Pass USD/EUR exactly as the user gave the amount — the app converts it to UAH at the NBU rate of the date; never convert yourself.",
+    ),
   date: DATE,
   note: z.string().max(500).nullable().optional(),
   store: z.string().max(200).nullable().optional().describe("Merchant name."),
@@ -445,6 +487,7 @@ const updateTransactionsInput = z.object({
   ids: z.array(ID).min(1).max(MAX_BULK).describe("One or more transactions; all get the same new values."),
   type: transactionFields.type.optional(),
   amount: transactionFields.amount,
+  currency: transactionFields.currency,
   date: DATE.optional(),
   note: transactionFields.note,
   store: transactionFields.store,
@@ -596,6 +639,28 @@ export const AGENT_TOOLS: AgentTool[] = [
     run: (userId, i) => getPlansForMonth(userId, i.month),
   }),
   tool({
+    name: "convert_currency",
+    description:
+      "Convert an amount between UAH, USD and EUR at the National Bank of Ukraine's official rate for a date (default today). Use it for any conversion question instead of your own rates.",
+    input: z.object({
+      amount: MONEY,
+      from: z.enum(CURRENCIES),
+      to: z.enum(CURRENCIES),
+      date: DATE.optional().describe("Rate date, YYYY-MM-DD. Default today."),
+    }),
+    requiresApproval: false,
+    run: async (_userId, i) => {
+      const date = i.date ?? new Date().toISOString().slice(0, 10);
+      try {
+        const r = await convert(i.amount, i.from, i.to, date);
+        return { amount: i.amount, from: i.from, to: i.to, ...r, source: "NBU official rate" };
+      } catch (err) {
+        if (err instanceof CurrencyError) throw new AgentToolError(err.message);
+        throw err;
+      }
+    },
+  }),
+  tool({
     name: "scan_receipt",
     description:
       "Read a receipt photo: receipt_id = one the user attached in this chat ([Image attached: receipt #<id>]), transaction_id = the photo already stored on a transaction. Every call re-reads the image, so call again if the result looks wrong; the latest scan is what create_transaction / apply_receipt_scan uses.",
@@ -656,13 +721,13 @@ export const AGENT_TOOLS: AgentTool[] = [
       }
       return [
         `Create ${i.type} transaction`,
-        `amount: ${fmt(i.amount)}`,
+        `amount: ${await amountText(i.amount, i.currency, i.date)}`,
         `date: ${i.date}`,
         `category: ${category}`,
         `store: ${fmt(i.store)}`,
         `note: ${fmt(i.note)}`,
         ...(receipt
-          ? [`receipt: ${receipt.scan.products.length} products, total ${fmt(receipt.scan.total)}`]
+          ? [`receipt: ${receipt.scan.products.length} products, total ${scanTotalText(receipt.scan)}`]
           : []),
         ...(products
           ? [`products: ${products.map((p) => `${p.name} ${fmt(p.cost)}`).join(", ")} (costs sum to ${fmt(costSum(products))})`]
@@ -692,13 +757,11 @@ export const AGENT_TOOLS: AgentTool[] = [
       }
       if (!receipt) return { transaction_id: r.id };
       try {
-        await upsertReceipt(
-          userId,
-          r.id,
-          { bytes: receipt.image, contentType: receipt.content_type },
-          receipt.scan.total,
-        );
-        await insertProducts(userId, r.id, receipt.scan.products);
+        await upsertReceipt(userId, r.id, { bytes: receipt.image, contentType: receipt.content_type });
+        // A USD/EUR receipt lands in UAH, at the transaction date's rate.
+        const converted = await convertScanToBase(receipt.scan, i.date);
+        await setReceiptTotal(userId, r.id, converted);
+        await insertProducts(userId, r.id, converted.scan.products);
       } finally {
         // Never leave the row on 'processing'.
         await recomputeTransactionStatus(userId, r.id);
@@ -719,7 +782,7 @@ export const AGENT_TOOLS: AgentTool[] = [
       return [
         `Apply the scanned receipt to transaction ${txLabel(tx)}`,
         `products: ${tx.products?.length ?? 0} → ${scan.products.length} (costs sum to ${fmt(sum)})`,
-        `scanned total: ${fmt(tx.scanned_total)} → ${fmt(scan.total)}`,
+        `scanned total: ${fmt(tx.scanned_total)} → ${scanTotalText(scan)}`,
         ...(tx.category_id === null && scan.category ? [`category: — → ${scan.category}`] : []),
         ...(tx.store === null && scan.store ? [`store: — → ${scan.store}`] : []),
       ].join("\n");
@@ -742,7 +805,7 @@ export const AGENT_TOOLS: AgentTool[] = [
       return [
         `Replace the receipt photo of transaction ${txLabel(tx)}`,
         `products: ${tx.products?.length ?? 0} → ${scan.products.length}`,
-        `scanned total: ${fmt(tx.scanned_total)} → ${fmt(scan.total)}`,
+        `scanned total: ${fmt(tx.scanned_total)} → ${scanTotalText(scan)}`,
       ].join("\n");
     },
     run: async (userId, i) => {
@@ -771,7 +834,13 @@ export const AGENT_TOOLS: AgentTool[] = [
         .map((tx) => ({ tx, lines: diffLines(shownFields(tx), shown) }))
         .filter((c) => c.lines.length > 0);
       if (changed.length === 0) throw new AgentToolError("Nothing would change");
-      if (txs.length === 1) return [`Update transaction ${txLabel(txs[0])}`, ...changed[0].lines].join("\n");
+      // A USD/EUR amount: show what it comes to in UAH.
+      const uah =
+        i.amount != null && i.currency && i.currency !== BASE_CURRENCY
+          ? [`in UAH: ${await amountText(i.amount, i.currency, i.date ?? txs[0].date)}`]
+          : [];
+      if (txs.length === 1)
+        return [`Update transaction ${txLabel(txs[0])}`, ...changed[0].lines, ...uah].join("\n");
       const values = Object.entries(shown)
         .filter(([, v]) => v !== undefined)
         .map(([k, v]) => `${k} → ${fmt(v)}`)
@@ -782,6 +851,7 @@ export const AGENT_TOOLS: AgentTool[] = [
         ...changed.slice(0, SUMMARY_ROWS).map((c) => txLabel(c.tx)),
         ...(changed.length > SUMMARY_ROWS ? [`…and ${changed.length - SUMMARY_ROWS} more`] : []),
         ...(unchanged > 0 ? [`(${unchanged} already match)`] : []),
+        ...uah,
       ].join("\n");
     },
     run: async (userId, { ids, ...i }) => {
@@ -792,7 +862,9 @@ export const AGENT_TOOLS: AgentTool[] = [
         const merged = {
           id: tx.id,
           type: tx.type,
-          amount: tx.amount,
+          // Re-saved as entered, so a USD/EUR row keeps its original.
+          amount: tx.original_amount ?? tx.amount,
+          currency: tx.currency,
           date: tx.date,
           note: tx.note,
           store: tx.store,

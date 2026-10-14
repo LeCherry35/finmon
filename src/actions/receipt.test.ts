@@ -169,7 +169,28 @@ describe("scanReceiptForTransaction", () => {
 
     const totalCall = query.mock.calls.find(([sql]) => /UPDATE receipts SET total/.test(sql));
     expect(totalCall).toBeDefined();
-    expect(totalCall![1]).toEqual([17.4, 42, TEST_USER_ID]);
+    // a UAH receipt: no original, no rate
+    expect(totalCall![1]).toEqual([17.4, "UAH", null, null, 42, TEST_USER_ID]);
+  });
+
+  it("converts a EUR receipt to UAH at the transaction date's (cached) rate", async () => {
+    primeQueries();
+    const base = query.getMockImplementation()!;
+    query.mockImplementation(async (sql: string, params: unknown[]) => {
+      if (/UPDATE transactions\s+SET category_id/.test(sql)) return { rows: [{ date: "2026-06-01" }] };
+      if (/FROM exchange_rates/.test(sql)) return { rows: [{ rate: "45.5", date: "2026-06-01" }] };
+      return base(sql, params);
+    });
+    const milk = { name: "Milk", brand: null, cost: 2, product_type: null, tags: [], description: null, price: 1, amount: 2, unit: "l", discount: 0.5 };
+    scanReceipt.mockResolvedValueOnce(scanResult({ total: 2, currency: "EUR", products: [milk] }));
+
+    await scanReceiptForTransaction(formData({ transaction_id: "42", image: IMG }));
+
+    const totalCall = query.mock.calls.find(([sql]) => /UPDATE receipts SET total/.test(sql));
+    expect(totalCall![1]).toEqual([91, "EUR", 2, 45.5, 42, TEST_USER_ID]);
+    expect(insertProducts).toHaveBeenCalledWith(TEST_USER_ID, 42, [
+      { ...milk, cost: 91, price: 45.5, discount: 22.75 },
+    ]);
   });
 
   it("fills a blank category from an exact scanned-name match, never touching amount", async () => {

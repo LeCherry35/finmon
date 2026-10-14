@@ -3,6 +3,8 @@ import { revalidatePath } from "next/cache";
 import { pool } from "@/db";
 import { userOwnsCategory } from "@/db/queries";
 import { recomputeTransactionStatus } from "@/lib/mutations/products";
+import { BASE_CURRENCY, isCurrency, type Currency } from "@/lib/currencies";
+import { CurrencyError, toBase } from "@/lib/currency";
 import type { ActionResult } from "@/actions/transactions";
 
 // Transaction write logic, keyed by an explicit `userId`. The "use server"
@@ -23,6 +25,25 @@ function parseOptionalAmount(
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) return { error: "Amount must be positive" };
   return n;
+}
+
+type Money = { amount: number | null; currency: Currency; original_amount: number | null; exchange_rate: number | null };
+
+/** The entered `amount` is in the form's `currency` (blank → UAH). A USD/EUR
+ *  amount is converted to UAH at the NBU rate of `date`; the stored `amount` is
+ *  always UAH, with the entered figure and rate kept beside it. */
+async function toMoney(formData: FormData, amount: number | null, date: string): Promise<Money | { error: string }> {
+  const raw = ((formData.get("currency") as string | null) ?? "").trim() || BASE_CURRENCY;
+  if (!isCurrency(raw)) return { error: "Invalid currency" };
+  if (amount === null || raw === BASE_CURRENCY)
+    return { amount, currency: BASE_CURRENCY, original_amount: null, exchange_rate: null };
+  try {
+    const uah = await toBase(amount, raw, date);
+    return { amount: uah.amount, currency: raw, original_amount: amount, exchange_rate: uah.rate };
+  } catch (err) {
+    if (err instanceof CurrencyError) return { error: err.message };
+    throw err;
+  }
 }
 
 export async function createTransactionFor(
@@ -50,6 +71,9 @@ export async function createTransactionFor(
     return fail("Add an amount, a category, or a receipt photo");
   if (!date) return fail("Date is required");
   if (!DATE_RE.test(date)) return fail("Date must be YYYY-MM-DD");
+
+  const money = await toMoney(formData, amount, date);
+  if ("error" in money) return fail(money.error);
 
   let category_id: number | null = null;
   if (categoryName) {
@@ -79,8 +103,11 @@ export async function createTransactionFor(
   // unless a receipt was staged, in which case it starts 'processing'.
   const status = hasReceipt ? "processing" : "unverified";
   const { rows: txRows } = await pool.query<{ id: number }>(
-    "INSERT INTO transactions (amount, type, category_id, date, note, store, status, user_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
-    [amount, type, category_id, date, note, store, status, userId]
+    `INSERT INTO transactions
+       (amount, type, category_id, date, note, store, status, user_id, currency, original_amount, exchange_rate)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+    [money.amount, type, category_id, date, note, store, status, userId,
+     money.currency, money.original_amount, money.exchange_rate]
   );
 
   revalidatePath("/transactions");
@@ -112,6 +139,11 @@ export async function updateTransactionFor(
   if (category_id !== null && !(await userOwnsCategory(userId, category_id)))
     return { ok: false, error: "Invalid category" };
 
+  // Always re-converted: a rate is fixed per day (and cached), so an unchanged
+  // amount/currency/date gives the same UAH figure.
+  const money = await toMoney(formData, amount, date);
+  if ("error" in money) return { ok: false, error: money.error };
+
   // Same rule as creation: a transaction can't be edited down to nothing — with
   // both amount and category blank, a stored receipt must be there to fill in.
   if (amount === null && category_id === null) {
@@ -130,11 +162,13 @@ export async function updateTransactionFor(
        SELECT amount FROM transactions WHERE id = $7 AND user_id = $8
      )
      UPDATE transactions t
-     SET amount = $1, type = $2, category_id = $3, date = $4, note = $5, store = $6
+     SET amount = $1, type = $2, category_id = $3, date = $4, note = $5, store = $6,
+         currency = $9, original_amount = $10, exchange_rate = $11
      FROM prev
      WHERE t.id = $7 AND t.user_id = $8
      RETURNING prev.amount AS prev_amount`,
-    [amount, type, category_id, date, note, store, id, userId]
+    [money.amount, type, category_id, date, note, store, id, userId,
+     money.currency, money.original_amount, money.exchange_rate]
   );
 
   // Changing the amount can make the product-cost sum start (or stop) matching
@@ -145,7 +179,7 @@ export async function updateTransactionFor(
     updated[0] && updated[0].prev_amount !== null
       ? Number(updated[0].prev_amount)
       : null;
-  if (updated[0] && prevAmount !== amount) {
+  if (updated[0] && prevAmount !== money.amount) {
     await recomputeTransactionStatus(userId, id);
   }
 
@@ -158,8 +192,8 @@ export async function updateTransactionFor(
  *  set to 'ready_to_verify' by recomputeTransactionStatus) can be verified — the
  *  WHERE clause enforces the source state, so a no-op update means it wasn't
  *  eligible. Verifying with no manual amount adopts the scanned receipt total
- *  (a correlated subquery, not a join, so receipt-less rows still verify), so
- *  every verified transaction ends up with a filled amount. */
+ *  with its currency, original and rate (a LEFT JOIN, so receipt-less rows still
+ *  verify), so every verified transaction ends up with a filled amount. */
 export async function verifyTransactionFor(
   userId: string,
   formData: FormData,
@@ -170,7 +204,12 @@ export async function verifyTransactionFor(
   const { rowCount } = await pool.query(
     `UPDATE transactions t
      SET status = 'verified',
-         amount = COALESCE(t.amount, (SELECT total FROM receipts r WHERE r.transaction_id = t.id))
+         amount = COALESCE(t.amount, r.total),
+         currency = CASE WHEN t.amount IS NULL AND r.total IS NOT NULL THEN r.currency ELSE t.currency END,
+         original_amount = CASE WHEN t.amount IS NULL AND r.total IS NOT NULL THEN r.original_total ELSE t.original_amount END,
+         exchange_rate = CASE WHEN t.amount IS NULL AND r.total IS NOT NULL THEN r.exchange_rate ELSE t.exchange_rate END
+     FROM (SELECT 1) one
+     LEFT JOIN receipts r ON r.transaction_id = $1
      WHERE t.id = $1 AND t.user_id = $2 AND t.status = 'ready_to_verify'`,
     [id, userId]
   );

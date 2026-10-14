@@ -8,6 +8,7 @@ import {
   verifyTransactionFor,
 } from "@/lib/mutations/transactions";
 import type { Product } from "@/actions/products";
+import type { Currency } from "@/lib/currencies";
 
 export type TransactionStatus =
   | "processing"
@@ -36,6 +37,15 @@ export type Transaction = {
    *  the fallback amount when no manual amount exists; a mismatch with a manual
    *  amount blocks verification. */
   scanned_total?: number | null;
+  /** What the receipt printed: its currency, and its total in that currency
+   *  when foreign (scanned_total is always UAH). */
+  scanned_currency?: Currency | null;
+  scanned_original_total?: number | null;
+  /** `amount` is always UAH. A transaction entered in USD/EUR keeps the
+   *  entered figure and the NBU rate used (UAH per unit); both null for UAH. */
+  currency: Currency;
+  original_amount: number | null;
+  exchange_rate: number | null;
 };
 
 export type ActionResult = { ok: true } | { ok: false; error: string };

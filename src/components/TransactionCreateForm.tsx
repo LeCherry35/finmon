@@ -4,6 +4,7 @@ import { useActionState, useState } from "react";
 import { createTransaction } from "@/actions/transactions";
 import type { Category } from "@/actions/categories";
 import ReceiptUpload, { ManualEntryDivider } from "@/components/ReceiptUpload";
+import CurrencySelect from "@/components/CurrencySelect";
 import {
   emptyTransactionGuard,
   useReceiptScanCreate,
@@ -24,6 +25,9 @@ export default function TransactionCreateForm({
 
   const inputCls =
     "border border-zinc-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-zinc-400";
+  // inputCls minus rounding/padding-x, for the joined amount + currency pair.
+  const fieldCls =
+    "border border-zinc-300 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-zinc-400";
 
   return (
     <form
@@ -44,14 +48,17 @@ export default function TransactionCreateForm({
       <input type="hidden" name="has_receipt" value={receipt ? "1" : ""} />
       <ManualEntryDivider />
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <input
-          name="amount"
-          type="number"
-          step="0.01"
-          min="0.01"
-          placeholder="Amount"
-          className={inputCls}
-        />
+        <div className="flex min-w-0">
+          <input
+            name="amount"
+            type="number"
+            step="0.01"
+            min="0.01"
+            placeholder="Amount"
+            className={`min-w-0 flex-1 rounded-l px-3 ${fieldCls}`}
+          />
+          <CurrencySelect className={`-ml-px rounded-r px-2 ${fieldCls}`} />
+        </div>
         <select name="type" required className={inputCls}>
           <option value="spend">Spend</option>
           <option value="income">Income</option>

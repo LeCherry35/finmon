@@ -24,9 +24,10 @@ const m = vi.hoisted(() => ({
   parseProductFields: vi.fn(),
   recomputeTransactionStatus: vi.fn(),
 }));
-const { query, scanReceipt, upsertReceipt, getStoredReceipt, saveReceiptScan, applyScanToTransaction, deleteTransactionProducts } =
+const { query, scanReceipt, upsertReceipt, getStoredReceipt, saveReceiptScan, setReceiptTotal, applyScanToTransaction, deleteTransactionProducts } =
   vi.hoisted(() => ({
     query: vi.fn(),
+    setReceiptTotal: vi.fn(),
     scanReceipt: vi.fn(),
     upsertReceipt: vi.fn(),
     getStoredReceipt: vi.fn(),
@@ -42,10 +43,16 @@ vi.mock("@/lib/mutations/categories", () => m);
 vi.mock("@/lib/mutations/plans", () => m);
 vi.mock("@/db", () => ({ pool: { query } }));
 vi.mock("@/lib/receipt-scan", () => ({ scanReceipt }));
+const cur = vi.hoisted(() => {
+  class CurrencyError extends Error {}
+  return { CurrencyError, getRate: vi.fn(), convert: vi.fn(), convertScanToBase: vi.fn() };
+});
+vi.mock("@/lib/currency", () => cur);
 vi.mock("@/lib/receipts", () => ({
   upsertReceipt,
   getStoredReceipt,
   saveReceiptScan,
+  setReceiptTotal,
   applyScanToTransaction,
   deleteTransactionProducts,
 }));
@@ -63,6 +70,9 @@ const tx = {
   id: 9,
   type: "spend",
   amount: 10,
+  currency: "UAH",
+  original_amount: null,
+  exchange_rate: null,
   date: "2026-09-01",
   note: null,
   store: "Shop",
@@ -83,6 +93,10 @@ beforeEach(() => {
     saveReceiptScan,
     applyScanToTransaction,
     deleteTransactionProducts,
+    setReceiptTotal,
+    cur.getRate,
+    cur.convert,
+    cur.convertScanToBase,
   ])
     fn.mockReset();
 });
@@ -261,6 +275,34 @@ describe("write tools", () => {
     expect(summary).toBe("Update transaction #9 spend 10 on 2026-09-01 at Shop (Food)\namount: 10 → 12.5");
   });
 
+  it("create_transaction shows a USD amount with its UAH equivalent and passes the currency on", async () => {
+    cur.getRate.mockResolvedValue({ rate: 41.52, date: "2026-09-01" });
+    q.getCategories.mockResolvedValue([{ id: 3, name: "Food", priority: 5 }]);
+    const input = { type: "spend", amount: 25, currency: "USD", date: "2026-09-01", category_name: "Food" };
+
+    const summary = await describeCall("create_transaction", "user-1", input);
+    expect(summary).toContain("amount: 25 USD ≈ 1038.00 UAH (NBU 41.52 on 2026-09-01)");
+    expect(cur.getRate).toHaveBeenCalledWith("USD", "2026-09-01");
+
+    m.createTransactionFor.mockResolvedValue({ ok: true, id: 12 });
+    await run("create_transaction", "user-1", input);
+    expect(fields(m.createTransactionFor.mock.calls[0][1])).toMatchObject({ amount: "25", currency: "USD" });
+  });
+
+  it("update_transactions re-saves a USD row as entered, and needs an amount with a currency", async () => {
+    const usdTx = { ...tx, amount: 1038, currency: "USD", original_amount: 25, exchange_rate: 41.52 };
+    q.getTransaction.mockResolvedValue(usdTx);
+    q.getCategories.mockResolvedValue([]);
+    m.updateTransactionFor.mockResolvedValue({ ok: true });
+
+    await run("update_transactions", "user-1", { ids: [9], note: "x" });
+    expect(fields(m.updateTransactionFor.mock.calls[0][1])).toMatchObject({ amount: "25", currency: "USD", note: "x" });
+
+    await expect(describeCall("update_transactions", "user-1", { ids: [9], currency: "EUR" })).rejects.toThrow(
+      "pass the amount with it",
+    );
+  });
+
   it("update_transactions refuses a no-op, an unknown category or a missing transaction", async () => {
     q.getTransaction.mockResolvedValue(tx);
     await expect(describeCall("update_transactions", "user-1", { ids: [9], amount: 10 })).rejects.toThrow(
@@ -313,6 +355,7 @@ describe("write tools", () => {
       id: "9",
       type: "spend",
       amount: "12.5",
+      currency: "UAH",
       date: "2026-09-01",
       note: "",
       store: "Shop",
@@ -526,6 +569,33 @@ describe("write tools", () => {
   });
 });
 
+describe("convert_currency", () => {
+  it("converts at the NBU rate, defaulting to today", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-14T12:00:00Z"));
+    cur.convert.mockResolvedValue({ result: 1215, rate_date: "2026-10-14", uah_per_unit: { EUR: 48.6 } });
+
+    expect(await run("convert_currency", "user-1", { amount: 25, from: "EUR", to: "UAH" })).toEqual({
+      amount: 25,
+      from: "EUR",
+      to: "UAH",
+      result: 1215,
+      rate_date: "2026-10-14",
+      uah_per_unit: { EUR: 48.6 },
+      source: "NBU official rate",
+    });
+    expect(cur.convert).toHaveBeenCalledWith(25, "EUR", "UAH", "2026-10-14");
+    vi.useRealTimers();
+  });
+
+  it("reports a missing rate as a tool error", async () => {
+    cur.convert.mockRejectedValue(new cur.CurrencyError("Couldn't get the USD exchange rate"));
+    await expect(run("convert_currency", "user-1", { amount: 1, from: "USD", to: "UAH", date: "2026-01-01" })).rejects.toThrow(
+      AgentToolError,
+    );
+  });
+});
+
 describe("receipt tools", () => {
   const scan = {
     store: "Shop",
@@ -537,6 +607,11 @@ describe("receipt tools", () => {
       { name: "Bread", brand: null, cost: 10, product_type: null, tags: [], description: null, price: null, amount: null, unit: null, discount: null },
     ],
   };
+  // What convertScanToBase hands back (a UAH scan comes back unchanged).
+  const converted = { scan, currency: "UAH", original_total: null, rate: null };
+  beforeEach(() => {
+    cur.convertScanToBase.mockResolvedValue(converted);
+  });
   const attachment = (s: typeof scan | null = null) => ({
     id: 4,
     image: Buffer.from("AAAA", "base64"),
@@ -598,14 +673,24 @@ describe("receipt tools", () => {
     const fd = fields(m.createTransactionFor.mock.calls[0][1]);
     expect(fd.has_receipt).toBe("1");
     expect(fd).not.toHaveProperty("receipt_id");
-    expect(upsertReceipt).toHaveBeenCalledWith(
-      "user-1",
-      11,
-      { bytes: Buffer.from("AAAA", "base64"), contentType: "image/jpeg" },
-      12.5,
-    );
-    expect(m.insertProducts).toHaveBeenCalledWith("user-1", 11, scan.products);
+    expect(upsertReceipt).toHaveBeenCalledWith("user-1", 11, {
+      bytes: Buffer.from("AAAA", "base64"),
+      contentType: "image/jpeg",
+    });
+    expect(cur.convertScanToBase).toHaveBeenCalledWith(scan, "2026-09-17");
+    expect(setReceiptTotal).toHaveBeenCalledWith("user-1", 11, converted);
+    expect(m.insertProducts).toHaveBeenCalledWith("user-1", 11, converted.scan.products);
     expect(m.recomputeTransactionStatus).toHaveBeenCalledWith("user-1", 11);
+  });
+
+  it("create_transaction with a USD receipt shows the total as printed and stores it converted", async () => {
+    const usd = { ...scan, currency: "USD" };
+    query.mockResolvedValue({ rows: [attachment(usd)] });
+    q.getCategories.mockResolvedValue([{ id: 3, name: "Food", priority: 5 }]);
+    const input = { type: "spend", date: "2026-09-17", category_name: "Food", receipt_id: 4 };
+    expect(await describeCall("create_transaction", "user-1", input)).toContain(
+      "total 12.5 USD (converted to UAH on Accept)",
+    );
   });
 
   const storedReceipt = (s: typeof scan | null = null) => ({

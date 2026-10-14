@@ -8,6 +8,22 @@ Entry shape: `## <version> — <YYYY-MM-DD> — <headline>`, then **Added / Chan
 
 ---
 
+## 0.21.0 — 2026-10-14 — Currencies: UAH base, USD/EUR converted
+
+**Added**
+- A transaction's amount can be entered in UAH (the default), USD or EUR. A USD/EUR amount is converted to UAH at the National Bank of Ukraine's official rate for the transaction's date. The UAH figure is what's stored, summed and charted. The entered amount and the rate are kept: the row shows "$25.00 @ 45.08" under the UAH amount, and editing re-converts.
+- Receipt scanning reads the receipt's currency. It assumes UAH unless the receipt clearly prints USD/EUR, and converts a foreign receipt's total and line items to UAH before storing them.
+- Assistant: a `convert_currency` tool (NBU rate, any date), and a `currency` argument on `create_transaction` / `update_transactions` (the proposal card shows the UAH equivalent). The agent is told every amount in finmon is UAH.
+
+**Changed**
+- Product cost/price/discount fields are labelled UAH.
+
+**Migrations**
+- `025_currency.sql`: `exchange_rates` cache table. `currency` / `original_amount` / `exchange_rate` on `transactions`, and `currency` / `original_total` / `exchange_rate` on `receipts`. Existing rows become UAH.
+
+**Deploy notes**
+- The app container needs outbound HTTPS to `bank.gov.ua` (no key). If the NBU is unreachable, the latest cached rate is used; with none, a USD/EUR save fails with a friendly error.
+
 ## 0.20.0 — 2026-10-14 — Swipe between pages on mobile
 
 **Added**

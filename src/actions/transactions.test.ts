@@ -16,6 +16,11 @@ vi.mock("@/lib/dal", () => ({
   requireUser: vi.fn(async () => ({ id: "user-1" })),
 }));
 vi.mock("next/cache", () => ({ revalidatePath }));
+const cur = vi.hoisted(() => {
+  class CurrencyError extends Error {}
+  return { CurrencyError, toBase: vi.fn() };
+});
+vi.mock("@/lib/currency", () => cur);
 
 import {
   createTransaction,
@@ -28,6 +33,7 @@ beforeEach(() => {
   query.mockReset();
   release.mockReset();
   revalidatePath.mockReset();
+  cur.toBase.mockReset();
 });
 afterEach(() => vi.clearAllMocks());
 
@@ -75,11 +81,12 @@ describe("createTransaction", () => {
     expect(query.mock.calls[0][1]).toEqual([TEST_USER_ID, "Food"]);
     // category upsert: trimmed name + user id
     expect(query.mock.calls[1][1]).toEqual(["Food", TEST_USER_ID]);
-    // transaction insert: amount, type, category_id, date, note, store, status, user id
+    // transaction insert: amount, type, category_id, date, note, store, status, user id,
+    // then currency, original_amount, exchange_rate
     const [txSql, txParams] = query.mock.calls[2];
     expect(txSql).toMatch(/INSERT INTO transactions/);
     expect(txSql).toMatch(/RETURNING id/);
-    expect(txParams).toEqual([12.5, "spend", 7, "2026-06-01", "lunch", "Tesco", "unverified", TEST_USER_ID]);
+    expect(txParams).toEqual([12.5, "spend", 7, "2026-06-01", "lunch", "Tesco", "unverified", TEST_USER_ID, "UAH", null, null]);
     // no product insert
     expect(query.mock.calls.some(([sql]) => /INSERT INTO products/.test(sql))).toBe(false);
     expect(revalidatePath).toHaveBeenCalledWith("/transactions");
@@ -113,9 +120,46 @@ describe("createTransaction", () => {
     expect(query).toHaveBeenCalledTimes(1); // no category upsert
     const [sql, params] = query.mock.calls[0];
     expect(sql).toMatch(/INSERT INTO transactions/);
-    expect(params).toEqual([12.5, "spend", null, "2026-06-01", null, null, "unverified", TEST_USER_ID]);
+    expect(params).toEqual([12.5, "spend", null, "2026-06-01", null, null, "unverified", TEST_USER_ID, "UAH", null, null]);
     expect(revalidatePath).toHaveBeenCalledWith("/transactions");
     expect(revalidatePath).not.toHaveBeenCalledWith("/categories");
+  });
+
+  it("converts a USD amount to UAH at the transaction date's rate, keeping the original", async () => {
+    cur.toBase.mockResolvedValueOnce({ amount: 1038, rate: 41.52 });
+    query.mockResolvedValueOnce({ rows: [{ id: 44 }] });
+
+    await createTransaction(
+      prev,
+      formData({ amount: "25", currency: "USD", type: "spend", category_name: "", date: "2026-06-01" }),
+    );
+
+    expect(cur.toBase).toHaveBeenCalledWith(25, "USD", "2026-06-01");
+    expect(query.mock.calls[0][1]).toEqual([1038, "spend", null, "2026-06-01", null, null, "unverified", TEST_USER_ID, "USD", 25, 41.52]);
+  });
+
+  it("rejects an unknown currency, and reports a missing rate without writing", async () => {
+    const base = { amount: "25", type: "spend", category_name: "", date: "2026-06-01" };
+    expect(await createTransaction(prev, formData({ ...base, currency: "GBP" }))).toEqual({
+      ...prev,
+      error: "Invalid currency",
+    });
+    cur.toBase.mockRejectedValueOnce(new cur.CurrencyError("Couldn't get the USD exchange rate"));
+    expect(await createTransaction(prev, formData({ ...base, currency: "USD" }))).toEqual({
+      ...prev,
+      error: "Couldn't get the USD exchange rate",
+    });
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it("stores a currency-less blank amount as UAH without a rate lookup", async () => {
+    query.mockResolvedValueOnce({ rows: [{ id: 45 }] });
+    await createTransaction(
+      prev,
+      formData({ amount: "", currency: "EUR", type: "spend", category_name: "", date: "2026-06-01", has_receipt: "1" }),
+    );
+    expect(cur.toBase).not.toHaveBeenCalled();
+    expect(query.mock.calls[0][1].slice(-3)).toEqual(["UAH", null, null]);
   });
 
   it("creates from a receipt alone: blank amount and category are stored as null", async () => {
@@ -128,7 +172,7 @@ describe("createTransaction", () => {
 
     expect(result).toEqual({ successCount: 3, lastTxId: 43 });
     // amount + category null, status 'processing' until the scan fills them in
-    expect(query.mock.calls[0][1]).toEqual([null, "spend", null, "2026-06-01", null, null, "processing", TEST_USER_ID]);
+    expect(query.mock.calls[0][1]).toEqual([null, "spend", null, "2026-06-01", null, null, "processing", TEST_USER_ID, "UAH", null, null]);
   });
 
   it("starts the row as 'processing' when a receipt is staged (has_receipt)", async () => {
@@ -208,7 +252,7 @@ describe("updateTransaction", () => {
     );
     expect(result).toEqual({ ok: true });
     // amount and category_id land as null (no ownership check without a category)
-    expect(query.mock.calls[1][1]).toEqual([null, "spend", null, "2026-06-01", null, null, 5, TEST_USER_ID]);
+    expect(query.mock.calls[1][1]).toEqual([null, "spend", null, "2026-06-01", null, null, 5, TEST_USER_ID, "UAH", null, null]);
     // blanking the amount counts as an amount change — status recomputed
     expect(query).toHaveBeenCalledTimes(4);
   });
@@ -228,8 +272,20 @@ describe("updateTransaction", () => {
     expect(result).toEqual({ ok: true });
     const [sql, params] = query.mock.calls[1];
     expect(sql).toMatch(/WHERE t\.id = \$7 AND t\.user_id = \$8/);
-    expect(params).toEqual([10, "spend", 3, "2026-06-01", null, null, 5, TEST_USER_ID]);
+    expect(params).toEqual([10, "spend", 3, "2026-06-01", null, null, 5, TEST_USER_ID, "UAH", null, null]);
     expect(revalidatePath).toHaveBeenCalledWith("/transactions");
+  });
+
+  it("re-converts a foreign amount on every save (rate of the new date)", async () => {
+    cur.toBase.mockResolvedValueOnce({ amount: 1100, rate: 44 });
+    query
+      .mockResolvedValueOnce({ rowCount: 1 }) // ownership check
+      .mockResolvedValueOnce({ rows: [{ prev_amount: "1038.00" }] }) // update (UAH amount moved)
+      .mockResolvedValueOnce({ rows: [] }); // recompute SELECT
+    const result = await updateTransaction(formData({ ...valid, amount: "25", currency: "EUR", date: "2026-05-01" }));
+    expect(result).toEqual({ ok: true });
+    expect(cur.toBase).toHaveBeenCalledWith(25, "EUR", "2026-05-01");
+    expect(query.mock.calls[1][1]).toEqual([1100, "spend", 3, "2026-05-01", null, null, 5, TEST_USER_ID, "EUR", 25, 44]);
   });
 
   it("recomputes status when the amount changed", async () => {

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import type { ProductFields } from "@/actions/products";
+import { BASE_CURRENCY, CURRENCIES, isCurrency, type Currency } from "@/lib/currencies";
 import rawExamples from "@/lib/receipt-examples.json";
 import rawUnits from "@/lib/receipt-units.json";
 
@@ -19,6 +20,11 @@ export type ScanResult = {
   total: number | null;
   date: string | null;
   category: string | null;
+  /** The currency every money figure above and on the products is printed in —
+   *  UAH unless the receipt unmistakably shows USD/EUR. Converted to UAH when
+   *  the scan is applied (`convertScanToBase`). Absent on scans cached before
+   *  currencies existed, which are UAH. */
+  currency?: Currency;
   products: ProductFields[];
 };
 
@@ -109,6 +115,7 @@ const buildResponseSchema = (categoryNames: string[]) => ({
     total: { type: ["number", "null"] },
     date: { type: ["string", "null"] },
     category: { type: "string", enum: [...categoryNames, "other"] },
+    currency: { type: "string", enum: [...CURRENCIES] },
     products: {
       type: "array",
       items: {
@@ -139,7 +146,7 @@ const buildResponseSchema = (categoryNames: string[]) => ({
       },
     },
   },
-  required: ["store", "total", "date", "category", "products"],
+  required: ["store", "total", "date", "category", "currency", "products"],
 });
 
 /** Defensive parse of the model's JSON — strict mode should already guarantee the
@@ -161,6 +168,7 @@ const ResultSchema = z.object({
   total: z.number().nullable().optional(),
   date: z.string().nullable().optional(),
   category: z.string().nullable().optional(),
+  currency: z.string().nullable().optional(),
   products: z.array(ProductSchema),
 });
 
@@ -303,6 +311,7 @@ export async function scanReceipt(
     // A date in any other format can't be stored on the transaction.
     date: date !== null && SCAN_DATE_RE.test(date) ? date : null,
     category: trimOrNull(parsed.category),
+    currency: isCurrency(parsed.currency) ? parsed.currency : BASE_CURRENCY,
     products,
   };
 }

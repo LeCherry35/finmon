@@ -6,6 +6,7 @@ import { deleteTransaction, verifyTransaction } from "@/actions/transactions";
 import type { Transaction, TransactionStatus } from "@/actions/transactions";
 import type { Category } from "@/actions/categories";
 import ProductsModal from "@/components/ProductsModal";
+import { originalLabel } from "@/lib/currencies";
 
 const STATUS_META: Record<TransactionStatus, { label: string; cls: string }> = {
   processing: { label: "Processing", cls: "bg-amber-100 text-amber-700" },
@@ -117,9 +118,17 @@ export default function TransactionRow({
   const displayAmount = tx.amount ?? tx.scanned_total ?? null;
   const amountClass =
     tx.type === "income" ? "text-emerald-600" : "text-red-500";
+  // A USD/EUR original shows under the UAH figure it was converted to.
+  const original =
+    tx.amount !== null && tx.original_amount != null && tx.currency !== "UAH"
+      ? originalLabel(tx.original_amount, tx.currency, tx.exchange_rate)
+      : null;
   const amountNode =
     displayAmount !== null ? (
-      `${tx.type === "income" ? "+" : "-"}${displayAmount.toFixed(2)}`
+      <>
+        {`${tx.type === "income" ? "+" : "-"}${displayAmount.toFixed(2)}`}
+        {original && <span className="block text-[11px] text-zinc-400">{original}</span>}
+      </>
     ) : (
       <span className="inline-flex items-center rounded-full bg-amber-100 text-amber-700 px-2 py-0.5 text-[11px] font-medium font-sans">
         No amount
