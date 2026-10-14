@@ -3,6 +3,7 @@ import { Geist_Mono } from "next/font/google";
 import Link from "next/link";
 import NavLinks from "@/components/NavLinks";
 import MobileBottomNav from "@/components/MobileBottomNav";
+import SwipeNav from "@/components/SwipeNav";
 import UserMenu from "@/components/UserMenu";
 import BugReportButton from "@/components/BugReportButton";
 import AssistantFab from "@/components/agent/AssistantFab";
@@ -55,11 +56,11 @@ export default async function RootLayout({
           <main
             className={
               authed
-                ? "flex-1 pb-[calc(env(safe-area-inset-bottom,0px)+5rem)] md:pb-0"
+                ? "flex-1 overflow-x-clip md:overflow-x-visible pb-[calc(env(safe-area-inset-bottom,0px)+5rem)] md:pb-0"
                 : "flex-1"
             }
           >
-            {children}
+            {authed ? <SwipeNav>{children}</SwipeNav> : children}
           </main>
           {authed && <MobileBottomNav />}
           {agentOn && <AssistantFab />}

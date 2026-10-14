@@ -193,6 +193,7 @@ Covered client components and what each test pins:
 | `ChartTabs.test.tsx` | sets/clears `?chart=`, preserves other params, no-op on active tab |
 | `FilterPanel.test.tsx` | open dropdown, month/category toggle → URL params, "all but one" collapse, Clear all, `showCategoryFilter` |
 | `NavLinks.test.tsx` | remembered filter query appended to filter-page links (desktop + mobile nav), not `/categories` |
+| `SwipeNav.test.tsx` | `swipeTarget`/`shouldCommit`; `fireEvent.touch*` sequences → `router.push` only on a long horizontal swipe (stubs `window.matchMedia`, which jsdom lacks) |
 | `BugReportButton.test.tsx` | open/Escape/Close, submit `FormData` (message), auto-close on `successCount` bump, error keeps it open |
 
 Conventions / gotchas learned here:
