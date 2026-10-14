@@ -108,6 +108,28 @@ describe("FilterPanel", () => {
     expect(lastParams().has("categories")).toBe(false);
   });
 
+  it("selects just one month via its 'Only' button, keeping categories", async () => {
+    renderPanel({ months: ["2026-06", "2026-05"], categoryIds: [1] });
+    await open();
+    await userEvent.click(screen.getByRole("button", { name: "Only Apr 2026" }));
+    const p = lastParams();
+    expect(p.get("months")).toBe("2026-04");
+    expect(p.get("categories")).toBe("1");
+  });
+
+  it("selects just one category via its 'Only' button", async () => {
+    renderPanel({ months: ["2026-06"], categoryIds: "all" });
+    await open();
+    await userEvent.click(screen.getByRole("button", { name: "Only Rent" }));
+    expect(lastParams().get("categories")).toBe("2");
+  });
+
+  it("has no 'None' button", async () => {
+    renderPanel({ months: ["2026-06"], categoryIds: "all" });
+    await open();
+    expect(screen.queryByRole("button", { name: "None" })).not.toBeInTheDocument();
+  });
+
   it("clears both params via 'Clear all'", async () => {
     search = "months=2026-05&categories=1";
     renderPanel({ months: ["2026-05"], categoryIds: [1] });

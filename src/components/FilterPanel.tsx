@@ -130,14 +130,14 @@ export default function FilterPanel({
   function selectAllMonths() {
     navigate(monthsList, selected.categoryIds);
   }
-  function clearMonths() {
-    navigate([], selected.categoryIds);
+  function onlyMonth(month: string) {
+    navigate([month], selected.categoryIds);
   }
   function selectAllCategories() {
     navigate(selected.months, "all");
   }
-  function clearCategories() {
-    navigate(selected.months, []);
+  function onlyCategory(id: number) {
+    navigate(selected.months, allCategoryIds.length === 1 ? "all" : [id]);
   }
   function resetAll() {
     const params = new URLSearchParams(searchParams);
@@ -176,16 +176,19 @@ export default function FilterPanel({
       </button>
 
       {expanded && (
-        <div className="absolute left-0 top-full mt-1 z-30 w-[min(15rem,calc(100vw-2rem))] md:w-60 rounded-md border border-zinc-200 bg-white text-sm shadow-lg">
+        <div data-no-swipe className="absolute left-0 top-full mt-1 z-30 w-[min(15rem,calc(100vw-2rem))] md:w-60 rounded-md border border-zinc-200 bg-white text-sm shadow-lg">
           <section className="px-3 py-3">
-            <SectionHeader
-              label="Months"
-              onAll={selectAllMonths}
-              onClear={clearMonths}
-            />
+            <SectionHeader label="Months" onAll={selectAllMonths} />
             <ul className="space-y-1 max-h-64 overflow-auto pr-1">
               {monthsList.map((m) => (
-                <li key={m}>
+                <li key={m} className="flex items-center gap-1">
+                  <OnlyButton
+                    label={formatMonthLabel(m)}
+                    active={
+                      selectedMonths.length === 1 && selectedMonthSet.has(m)
+                    }
+                    onClick={() => onlyMonth(m)}
+                  />
                   <label className="flex items-center gap-2 cursor-pointer text-zinc-700 hover:text-zinc-900">
                     <input
                       type="checkbox"
@@ -205,15 +208,19 @@ export default function FilterPanel({
 
           {showCategoryFilter && (
             <section className="px-3 pb-3 pt-1 border-t border-zinc-100">
-              <SectionHeader
-                label="Categories"
-                onAll={selectAllCategories}
-                onClear={clearCategories}
-              />
+              <SectionHeader label="Categories" onAll={selectAllCategories} />
               <ul className="space-y-1 max-h-64 overflow-auto pr-1">
                 {categories.map((c) => (
-                  <li key={c.id}>
-                    <label className="flex items-center gap-2 cursor-pointer text-zinc-700 hover:text-zinc-900">
+                  <li key={c.id} className="flex items-center gap-1">
+                    <OnlyButton
+                      label={c.name}
+                      active={
+                        selectedCategoryIds.length === 1 &&
+                        selectedCategorySet.has(c.id)
+                      }
+                      onClick={() => onlyCategory(c.id)}
+                    />
+                    <label className="flex min-w-0 items-center gap-2 cursor-pointer text-zinc-700 hover:text-zinc-900">
                       <input
                         type="checkbox"
                         checked={selectedCategorySet.has(c.id)}
@@ -250,25 +257,59 @@ export default function FilterPanel({
 function SectionHeader({
   label,
   onAll,
-  onClear,
 }: {
   label: string;
   onAll: () => void;
-  onClear: () => void;
 }) {
   return (
     <div className="flex items-center justify-between mb-2">
       <span className="text-xs font-semibold text-zinc-700">{label}</span>
-      <div className="flex gap-2 text-[11px] text-zinc-400">
-        <button onClick={onAll} className="hover:text-zinc-700" type="button">
-          All
-        </button>
-        <span>·</span>
-        <button onClick={onClear} className="hover:text-zinc-700" type="button">
-          None
-        </button>
-      </div>
+      <button
+        onClick={onAll}
+        className="text-[11px] text-zinc-400 hover:text-zinc-700"
+        type="button"
+      >
+        All
+      </button>
     </div>
+  );
+}
+
+// Selects just this item; kept outside the row's <label> so it doesn't
+// also toggle the checkbox.
+function OnlyButton({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={`Only ${label}`}
+      title={`Only ${label}`}
+      className={`shrink-0 p-0.5 rounded hover:text-zinc-700 ${
+        active ? "text-zinc-700" : "text-zinc-300"
+      }`}
+    >
+      <svg
+        width="12"
+        height="12"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <circle cx="12" cy="12" r="9" />
+        <circle cx="12" cy="12" r="3" fill="currentColor" />
+      </svg>
+    </button>
   );
 }
 

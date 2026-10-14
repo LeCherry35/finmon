@@ -8,6 +8,17 @@ Entry shape: `## <version> — <YYYY-MM-DD> — <headline>`, then **Added / Chan
 
 ---
 
+## 0.20.0 — 2026-10-14 — Swipe between pages on mobile
+
+**Added**
+- On a phone, swipe left or right to move to the next or previous page in the bottom bar's order (Log → Cats → Spend → Plan → Charts). The page follows your finger and filters carry over. Dragging on a chart still shows its tooltip.
+
+**Changed**
+- Filters: each month and category has an "Only" button that selects just that one. The "None" links are gone.
+
+**Changed**
+- Filters: the "None" links are gone; a small target button before each month and category selects only that one.
+
 ## 0.19.1 — 2026-10-09 — Assistant fixes: new tools without an opencode restart, stale chats
 
 **Fixed**
