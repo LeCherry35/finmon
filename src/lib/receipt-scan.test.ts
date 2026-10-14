@@ -137,6 +137,21 @@ describe("scanReceipt", () => {
     expect(schema.properties.category.enum).toEqual(["other"]);
   });
 
+  it("asks for the currency as a UAH/USD/EUR enum, and reads anything else as UAH", async () => {
+    fetchMock
+      .mockResolvedValueOnce(openaiResponse({ store: null, total: 5, currency: "USD", products: [] }))
+      .mockResolvedValueOnce(openaiResponse({ store: null, total: 5, currency: "GBP", products: [] }))
+      .mockResolvedValueOnce(openaiResponse({ store: null, total: 5, products: [] }));
+
+    expect((await scanReceipt("data:image/png;base64,ZZZZ", CATS)).currency).toBe("USD");
+    expect((await scanReceipt("data:image/png;base64,ZZZZ", CATS)).currency).toBe("UAH");
+    expect((await scanReceipt("data:image/png;base64,ZZZZ", CATS)).currency).toBe("UAH");
+
+    const schema = JSON.parse(fetchMock.mock.calls[0][1].body).response_format.json_schema.schema;
+    expect(schema.properties.currency).toEqual({ type: "string", enum: ["UAH", "USD", "EUR"] });
+    expect(schema.required).toContain("currency");
+  });
+
   it("nulls a scanned date that is not YYYY-MM-DD", async () => {
     fetchMock.mockResolvedValueOnce(
       openaiResponse({

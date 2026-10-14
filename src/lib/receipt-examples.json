@@ -5,6 +5,7 @@
       "total": 6.85,
       "date": "2026-03-14",
       "category": "groceries",
+      "currency": "UAH",
       "products": [
         {
           "name": "Банани Коста Рика",
@@ -37,6 +38,7 @@
       "total": 8.99,
       "date": null,
       "category": "other",
+      "currency": "UAH",
       "products": [
         {
           "name": "Ibuprofen 200mg",
@@ -59,6 +61,7 @@
       "total": 8.3,
       "date": "2025-11-02",
       "category": "groceries",
+      "currency": "UAH",
       "products": [
         {
           "name": "Greek Yogurt 5%",
@@ -92,6 +95,7 @@
       "total": 75.4,
       "date": "2026-01-27",
       "category": "groceries",
+      "currency": "UAH",
       "products": [
         {
           "name": "Молоко Яготинське 2.6 1л",

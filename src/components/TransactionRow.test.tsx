@@ -29,6 +29,9 @@ const categories: Category[] = [
 const tx: Transaction = {
   id: 42,
   amount: 12.5,
+  currency: "UAH",
+  original_amount: null,
+  exchange_rate: null,
   type: "spend",
   category_id: 1,
   date: "2026-06-01",

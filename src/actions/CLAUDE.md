@@ -17,7 +17,7 @@ All DB writes live here. Each file is `"use server"` at the top, reads `FormData
 
 - Numbers via `Number(formData.get(...))`, then `!Number.isFinite(n) || n <= 0` for positive amounts/ids; `Number.isInteger(n) && 0 <= n <= 10` for `priority`. The transaction `amount` is **optional**: `parseOptionalAmount` in `transactions.ts` maps blank → `null` and otherwise applies the same positive-number rule.
 - Strings: `((formData.get(k) as string | null) ?? "").trim()`; empty string → null for nullable fields like `note`.
-- Whitelisted enums: `["income", "spend"].includes(type)` for transaction `type`.
+- Whitelisted enums: `["income", "spend"].includes(type)` for transaction `type`; `isCurrency` (`src/lib/currencies.ts`) for the optional `currency` field (blank → UAH, else "Invalid currency"). The `amount` is in that currency: `toMoney` in `src/lib/mutations/transactions.ts` converts USD/EUR to UAH on create and on every update. A missing rate (`CurrencyError`) is returned as the action's error, and nothing is written.
 - Date format: `DATE_RE = /^\d{4}-\d{2}-\d{2}$/` in `transactions.ts`, `MONTH_RE` for `YYYY-MM` is exported from `src/lib/filters.ts` and reused by `plans.ts`.
 - Unique-violation handling: `INSERT` paths that can hit a `UNIQUE` constraint wrap the query in `try/catch` and check `err.code === "23505"` via the local `isUniqueViolation` helper, returning a friendly error instead of throwing.
 

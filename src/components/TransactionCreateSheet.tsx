@@ -6,6 +6,7 @@ import type { Category } from "@/actions/categories";
 import { AssistantButton } from "@/components/agent/AssistantFab";
 import { SuggestionsButton } from "@/components/agent/SuggestionCount";
 import ReceiptUpload, { ManualEntryDivider } from "@/components/ReceiptUpload";
+import CurrencySelect from "@/components/CurrencySelect";
 import {
   emptyTransactionGuard,
   useReceiptScanCreate,
@@ -50,6 +51,9 @@ export default function TransactionCreateSheet({
 
   const inputCls =
     "w-full border border-zinc-300 rounded px-3 py-2 text-base focus:outline-none focus:ring-1 focus:ring-zinc-400";
+  // inputCls minus width/rounding/padding, for the joined amount + currency pair.
+  const fieldCls =
+    "border border-zinc-300 py-2 text-base focus:outline-none focus:ring-1 focus:ring-zinc-400";
 
   return (
     <>
@@ -120,15 +124,18 @@ export default function TransactionCreateSheet({
               <ManualEntryDivider />
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Amount">
-                  <input
-                    name="amount"
-                    type="number"
-                    step="0.01"
-                    min="0.01"
-                    inputMode="decimal"
-                    placeholder="0.00"
-                    className={inputCls}
-                  />
+                  <div className="flex">
+                    <input
+                      name="amount"
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      inputMode="decimal"
+                      placeholder="0.00"
+                      className={`min-w-0 flex-1 rounded-l px-3 ${fieldCls}`}
+                    />
+                    <CurrencySelect className={`-ml-px rounded-r px-2 ${fieldCls}`} />
+                  </div>
                 </Field>
                 <Field label="Type">
                   <select name="type" required className={inputCls}>
