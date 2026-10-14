@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "agent": "node --env-file=.env scripts/agent.mjs",
+    "agent:queries": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --env-file=.env scripts/agent-queries.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",

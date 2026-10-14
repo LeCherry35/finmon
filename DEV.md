@@ -47,6 +47,10 @@ Local dev login (email/password at `/login`):
 - **Email:** `test@email.com`
 - **Password:** `password`
 
+Demo account with anonymized real data: `demo@finmon.local` / `demo1234`, (re)built from a prod backup by `node --env-file=.env scripts/demo-from-backup.mjs [dump]`. `node --env-file=.env scripts/demo-fill-month.mjs [YYYY-MM]` fills a month the backup doesn't reach (default: current month, up to today) with transactions cloned from August/September.
+
+`npm run agent:queries -- [--models=… --queries=1,2 --email=… --out=report.md --keep]` runs a fixed set of assistant queries against the local agent on each model and reports replies, tool calls and timings (needs `npm run dev` and `npm run agent` running; see the header of `scripts/agent-queries.mjs`).
+
 Dev-only credentials for the local database — not used anywhere else. To get
 realistic data for it, set `OWNER_USER_ID` to the account's user id in `.env`
 and run `npm run db:seed:init`.
